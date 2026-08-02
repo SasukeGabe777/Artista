@@ -21,8 +21,21 @@ public partial class App : Application
         var window = new MainWindow();
         MainWindow = window;
         window.Show();
+
+        if (e.Args.Contains("--uitest"))
+        {
+            string outputDir = e.Args.SkipWhile(a => a != "--uitest").Skip(1).FirstOrDefault()
+                ?? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "artista-uitest");
+            _ = window.Dispatcher.InvokeAsync(async () =>
+            {
+                int exitCode = await window.RunSelfTestAsync(outputDir);
+                Shutdown(exitCode);
+            });
+            return;
+        }
+
         if (e.Args.Length > 0)
-            window.OpenFilesOnStartup(e.Args);
+            window.OpenFilesOnStartup(e.Args.Where(System.IO.File.Exists).ToArray());
     }
 
     private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

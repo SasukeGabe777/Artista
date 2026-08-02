@@ -535,7 +535,7 @@ public sealed partial class MainWindow
 
     private bool ConfirmCloseWorkspace(DocumentWorkspace ws)
     {
-        if (!ws.IsDirty) return true;
+        if (!ws.IsDirty || SuppressCloseConfirmation) return true;
         ActivateWorkspace(ws);
         var result = MessageBox.Show(this,
             $"Save changes to {ws.DisplayName.TrimEnd('*', ' ')}?",
@@ -937,13 +937,27 @@ public sealed partial class MainWindow
         ApplyEffect(effect, parameters);
     }
 
-    private void ApplyEffect(EffectBase effect, ParameterSet parameters)
+    /// <summary>Synchronous effect application used by the self-test harness.</summary>
+    public void ApplyEffectSync(EffectBase effect, ParameterSet parameters)
     {
         if (_active == null) return;
-        var ws = _active;
-        var doc = ws.Document;
+        var doc = _active.Document;
+        var targets = ResolveEffectTargets(effect, parameters, doc);
+        if (targets.Count == 0) return;
+        var selection = ResolveEffectSelection(effect, parameters, doc);
+        var roi = selection.IsEmpty ? doc.Bounds : selection.Bounds;
+        var results = new List<(Layer Layer, Surface Result)>();
+        foreach (var target in targets)
+        {
+            var result = target.Surface.Clone();
+            EffectRunner.RunMasked(effect, target.Surface, result, parameters, selection, doc.Bounds, CancellationToken.None);
+            results.Add((target, result));
+        }
+        CommitEffectResults(effect, results, roi);
+    }
 
-        // Resolve target layers (Remove Color supports multi-layer scope).
+    private static List<Layer> ResolveEffectTargets(EffectBase effect, ParameterSet parameters, Document doc)
+    {
         var targets = new List<Layer> { doc.ActiveLayer };
         if (effect is RemoveColorEffect)
         {
@@ -951,28 +965,49 @@ public sealed partial class MainWindow
             if (scope != RemoveColorEffect.ScopeCurrentLayer)
             {
                 targets = doc.Layers
-                    .Where(l => !l.Locked)
                     .Where(l => l.Visible || scope == RemoveColorEffect.ScopeAllLayers)
                     .ToList();
             }
-            bool limitToSelection = parameters.GetBool("limitToSelection");
-            if (!limitToSelection && !doc.Selection.IsEmpty)
-            {
-                // Temporarily ignore the selection for this application.
-                // Handled below by passing an empty selection.
-            }
         }
         targets.RemoveAll(l => l.Locked);
+        return targets;
+    }
+
+    private static Selection ResolveEffectSelection(EffectBase effect, ParameterSet parameters, Document doc)
+    {
+        if (effect is RemoveColorEffect && !parameters.GetBool("limitToSelection"))
+            return new Selection(doc.Width, doc.Height);
+        return doc.Selection;
+    }
+
+    private void CommitEffectResults(EffectBase effect, List<(Layer Layer, Surface Result)> results, RectInt roi)
+    {
+        if (_active == null) return;
+        var mementos = new List<HistoryMemento>();
+        foreach (var (target, result) in results)
+        {
+            var before = target.Surface.ExtractRect(roi);
+            mementos.Add(new SurfaceRegionMemento(effect.Name, target, roi, before));
+            target.Surface.CopyRect(result, roi);
+        }
+        PushHistory(mementos.Count == 1 ? mementos[0] : new CompositeMemento(effect.Name, mementos), "Icon.Properties");
+        InvalidateDocument(_active.Document.Bounds);
+        SetStatus($"{effect.Name} applied.");
+    }
+
+    private void ApplyEffect(EffectBase effect, ParameterSet parameters)
+    {
+        if (_active == null) return;
+        var ws = _active;
+        var doc = ws.Document;
+
+        var targets = ResolveEffectTargets(effect, parameters, doc);
         if (targets.Count == 0)
         {
             SetStatus("No editable layers in scope.");
             return;
         }
-
-        var selection = doc.Selection;
-        if (effect is RemoveColorEffect && !parameters.GetBool("limitToSelection"))
-            selection = new Selection(doc.Width, doc.Height); // empty = whole canvas
-
+        var selection = ResolveEffectSelection(effect, parameters, doc);
         var roi = selection.IsEmpty ? doc.Bounds : selection.Bounds;
         var progress = new ProgressDialog(effect.Name, this);
         var results = new List<(Layer Layer, Surface Result)>();
@@ -1011,19 +1046,8 @@ public sealed partial class MainWindow
                 return;
             }
             // Commit all results as one history step.
-            var mementos = new List<HistoryMemento>();
             lock (results)
-            {
-                foreach (var (target, result) in results)
-                {
-                    var before = target.Surface.ExtractRect(roi);
-                    mementos.Add(new SurfaceRegionMemento(effect.Name, target, roi, before));
-                    target.Surface.CopyRect(result, roi);
-                }
-            }
-            PushHistory(mementos.Count == 1 ? mementos[0] : new CompositeMemento(effect.Name, mementos), "Icon.Properties");
-            InvalidateDocument(doc.Bounds);
-            SetStatus($"{effect.Name} applied.");
+                CommitEffectResults(effect, results, roi);
         }));
         progress.ShowDialog();
     }

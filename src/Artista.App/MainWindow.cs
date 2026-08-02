@@ -40,6 +40,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
     private readonly TextBlock _statusZoom = new() { VerticalAlignment = VerticalAlignment.Center, MinWidth = 48 };
 
     private Action<uint>? _pendingEyedropper;
+    private Menu _menuBar = null!;
 
     public MainWindow()
     {
@@ -89,9 +90,9 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
     {
         var root = new DockPanel();
 
-        var menu = BuildMenu();
-        DockPanel.SetDock(menu, Dock.Top);
-        root.Children.Add(menu);
+        _menuBar = BuildMenu();
+        DockPanel.SetDock(_menuBar, Dock.Top);
+        root.Children.Add(_menuBar);
 
         var toolbar = BuildToolbar();
         DockPanel.SetDock(toolbar, Dock.Top);

@@ -474,7 +474,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="20"/>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="30"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="14"/>
                 </Grid.ColumnDefinitions>
                 <!-- check glyph / icon -->

@@ -20,8 +20,6 @@ public enum AppTheme
 /// </summary>
 public static class ThemeManager
 {
-    private static ResourceDictionary? _current;
-
     public static AppTheme Theme { get; private set; } = AppTheme.Dark;
 
     /// <summary>The effective theme after resolving System.</summary>
@@ -37,14 +35,26 @@ public static class ThemeManager
         var uri = new Uri($"Themes/{(dark ? "Dark" : "Light")}.xaml", UriKind.Relative);
         var dict = new ResourceDictionary { Source = uri };
 
-        var app = Application.Current;
-        if (_current != null)
-            app.Resources.MergedDictionaries.Remove(_current);
-        // Insert palette before Controls.xaml so lookups resolve.
-        app.Resources.MergedDictionaries.Insert(0, dict);
-        _current = dict;
+        // Replace the palette dictionary in place (App.xaml merges Dark.xaml as
+        // the first entry); replacing rather than inserting keeps lookup order
+        // deterministic — the last dictionary containing a key wins in WPF.
+        var merged = Application.Current.Resources.MergedDictionaries;
+        int paletteIndex = -1;
+        for (int i = 0; i < merged.Count; i++)
+        {
+            string? source = merged[i].Source?.OriginalString;
+            if (source != null && (source.EndsWith("Dark.xaml") || source.EndsWith("Light.xaml")))
+            {
+                paletteIndex = i;
+                break;
+            }
+        }
+        if (paletteIndex >= 0)
+            merged[paletteIndex] = dict;
+        else
+            merged.Insert(0, dict);
 
-        foreach (Window window in app.Windows)
+        foreach (Window window in Application.Current.Windows)
             ApplyTitleBar(window);
         ThemeChanged?.Invoke(null, EventArgs.Empty);
     }

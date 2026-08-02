@@ -200,7 +200,13 @@ public sealed class ColorRemoverTool : StrokeToolBase
         {
             var ws = Context.Workspace!;
             if (ws.Document.Bounds.Contains(e.PixelX, e.PixelY))
-                _target = ws.Document.ActiveLayer.Surface[e.PixelX, e.PixelY];
+            {
+                uint sample = ws.Document.ActiveLayer.Surface[e.PixelX, e.PixelY];
+                // A fully transparent pixel has no meaningful color — keep the
+                // previous target so the stroke still does what the user expects.
+                if (ColorBgra.A(sample) > 0)
+                    _target = sample;
+            }
         }
         else
         {
@@ -217,7 +223,7 @@ public sealed class ColorRemoverTool : StrokeToolBase
             Snapshot != null)
         {
             uint sample = Snapshot[e.PixelX, e.PixelY];
-            if (sample != _target)
+            if (ColorBgra.A(sample) > 0 && sample != _target)
             {
                 _target = sample;
                 _matcher = ColorMatcher.FromBgra(_target, Context.Environment.Tolerance, Context.Environment.Softness);

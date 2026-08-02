@@ -69,8 +69,8 @@ public sealed class ColorsPanel : StackPanel
         Children.Add(row);
 
         // --- wheel ---
-        _wheel.Width = _wheel.Height = 140;
-        _wheel.Margin = new Thickness(0, 10, 0, 6);
+        _wheel.Width = _wheel.Height = 128;
+        _wheel.Margin = new Thickness(0, 8, 0, 4);
         _wheel.HorizontalAlignment = HorizontalAlignment.Center;
         _wheel.ColorSelected += (_, hs) =>
         {
@@ -79,27 +79,38 @@ public sealed class ColorsPanel : StackPanel
         };
         Children.Add(_wheel);
 
-        // --- sliders ---
-        Children.Add(SliderRow("H:", _h, 0, 360, OnHsvSlider, out _));
-        Children.Add(SliderRow("S:", _s, 0, 100, OnHsvSlider, out _));
-        Children.Add(SliderRow("V:", _v, 0, 100, OnHsvSlider, out _));
-        Children.Add(SliderRow("R:", _r, 0, 255, OnRgbSlider, out var rb)); _rBoxRef = rb;
-        Children.Add(SliderRow("G:", _g, 0, 255, OnRgbSlider, out var gb)); _gBoxRef = gb;
-        Children.Add(SliderRow("B:", _b, 0, 255, OnRgbSlider, out var bb)); _bBoxRef = bb;
-        Children.Add(SliderRow("A:", _a, 0, 255, OnRgbSlider, out var ab)); _aBoxRef = ab;
-
-        // --- hex ---
-        var hexRow = new DockPanel { Margin = new Thickness(0, 4, 0, 0) };
+        // --- hex + expander row ---
+        var hexRow = new DockPanel { Margin = new Thickness(0, 2, 0, 0) };
         var hexLabel = new TextBlock { Text = "Hex:", Width = 30, VerticalAlignment = VerticalAlignment.Center };
-        _hex.Width = 84;
+        _hex.Width = 70;
         _hex.KeyDown += (_, e) =>
         {
             if (e.Key == Key.Enter) ApplyHex();
         };
         _hex.LostFocus += (_, _) => ApplyHex();
+        var moreButton = new Button { Content = "More »", Padding = new Thickness(8, 2, 8, 2), HorizontalAlignment = HorizontalAlignment.Right };
+        DockPanel.SetDock(moreButton, Dock.Right);
         hexRow.Children.Add(hexLabel);
+        hexRow.Children.Add(moreButton);
         hexRow.Children.Add(_hex);
         Children.Add(hexRow);
+
+        // --- sliders (collapsed by default, Paint.NET's "More/Less") ---
+        var sliders = new StackPanel { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 4, 0, 0) };
+        sliders.Children.Add(SliderRow("H:", _h, 0, 360, OnHsvSlider, out _));
+        sliders.Children.Add(SliderRow("S:", _s, 0, 100, OnHsvSlider, out _));
+        sliders.Children.Add(SliderRow("V:", _v, 0, 100, OnHsvSlider, out _));
+        sliders.Children.Add(SliderRow("R:", _r, 0, 255, OnRgbSlider, out var rb)); _rBoxRef = rb;
+        sliders.Children.Add(SliderRow("G:", _g, 0, 255, OnRgbSlider, out var gb)); _gBoxRef = gb;
+        sliders.Children.Add(SliderRow("B:", _b, 0, 255, OnRgbSlider, out var bb)); _bBoxRef = bb;
+        sliders.Children.Add(SliderRow("A:", _a, 0, 255, OnRgbSlider, out var ab)); _aBoxRef = ab;
+        Children.Add(sliders);
+        moreButton.Click += (_, _) =>
+        {
+            bool show = sliders.Visibility != Visibility.Visible;
+            sliders.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            moreButton.Content = show ? "« Less" : "More »";
+        };
 
         // --- palette ---
         var paletteHeader = new DockPanel { Margin = new Thickness(0, 10, 0, 2) };
@@ -168,6 +179,7 @@ public sealed class ColorsPanel : StackPanel
         var localSlider = slider;
         slider.Minimum = min;
         slider.Maximum = max;
+        localBox.Text = ((int)Math.Round(slider.Value)).ToString();
         slider.ValueChanged += (s, e) =>
         {
             if (!_updating) onChange(s, e);
