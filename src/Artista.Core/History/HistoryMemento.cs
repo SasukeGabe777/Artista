@@ -216,34 +216,47 @@ public sealed class ActiveLayerMemento : HistoryMemento
 }
 
 /// <summary>
-/// Restores whole-document structure: dimensions, the full layer list (surface
-/// references) and selection. Used for canvas resize, rotate, flatten, crop.
+/// Restores whole-document structure: dimensions, the layer list, each layer's
+/// surface reference and properties, and the selection. Used for canvas
+/// resize, rotate, flip, flatten, crop and merge.
+///
+/// It captures the same Layer objects (so their ids stay valid for other
+/// history entries) together with their current Surface references — document
+/// transforms must therefore REPLACE layer surfaces, never mutate them in
+/// place.
 /// </summary>
 public sealed class DocumentStructureMemento : HistoryMemento
 {
-    private int _width;
-    private int _height;
-    private List<Layer>? _layers;
+    private sealed record Entry(Layer Layer, Surface Surface, LayerProperties Properties);
+
+    private readonly int _width;
+    private readonly int _height;
+    private List<Entry>? _entries;
     private byte[]? _selectionMask;
-    private int _activeIndex;
+    private readonly int _activeIndex;
 
     public DocumentStructureMemento(string name, Document doc) : base(name)
     {
         _width = doc.Width;
         _height = doc.Height;
-        _layers = new List<Layer>(doc.Layers);
+        _entries = doc.Layers.Select(l => new Entry(l, l.Surface, l.GetProperties())).ToList();
         _selectionMask = doc.Selection.SnapshotMask();
         _activeIndex = doc.ActiveLayerIndex;
     }
 
     public override long SizeEstimate =>
-        (_layers?.Sum(l => l.Surface.ByteCount) ?? 0) + (_selectionMask?.LongLength ?? 0) + 256;
+        (_entries?.Sum(e => e.Surface.ByteCount) ?? 0) + (_selectionMask?.LongLength ?? 0) + 256;
 
     public override HistoryMemento Apply(Document doc)
     {
         var inverse = new DocumentStructureMemento(Name, doc);
-        doc.SetCanvasRaw(_width, _height, _layers!, _selectionMask!, _activeIndex);
-        _layers = null;
+        foreach (var entry in _entries!)
+        {
+            entry.Layer.Surface = entry.Surface;
+            entry.Layer.SetProperties(entry.Properties);
+        }
+        doc.SetCanvasRaw(_width, _height, _entries.Select(e => e.Layer).ToList(), _selectionMask!, _activeIndex);
+        _entries = null;
         _selectionMask = null;
         return inverse;
     }

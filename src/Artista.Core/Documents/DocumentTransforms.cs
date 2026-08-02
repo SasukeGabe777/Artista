@@ -97,16 +97,23 @@ public static class DocumentTransforms
         }
     }
 
+    // Note: transforms must REPLACE layer surfaces (not mutate them in place) so
+    // DocumentStructureMemento's captured surface references stay pristine.
+
     public static void FlipHorizontal(Document doc)
     {
         foreach (var layer in doc.Layers)
         {
-            var s = layer.Surface;
-            Parallel.For(0, s.Height, y =>
+            var src = layer.Surface;
+            var dst = new Surface(src.Width, src.Height);
+            Parallel.For(0, src.Height, y =>
             {
-                var row = s.GetRow(y);
-                row.Reverse();
+                var srcRow = src.GetRow(y);
+                var dstRow = dst.GetRow(y);
+                for (int x = 0; x < src.Width; x++)
+                    dstRow[x] = srcRow[src.Width - 1 - x];
             });
+            layer.Surface = dst;
         }
     }
 
@@ -114,14 +121,10 @@ public static class DocumentTransforms
     {
         foreach (var layer in doc.Layers)
         {
-            var s = layer.Surface;
-            Parallel.For(0, s.Height / 2, y =>
-            {
-                var top = s.GetRow(y);
-                var bottom = s.GetRow(s.Height - 1 - y);
-                for (int x = 0; x < s.Width; x++)
-                    (top[x], bottom[x]) = (bottom[x], top[x]);
-            });
+            var src = layer.Surface;
+            var dst = new Surface(src.Width, src.Height);
+            Parallel.For(0, src.Height, y => src.GetRow(src.Height - 1 - y).CopyTo(dst.GetRow(y)));
+            layer.Surface = dst;
         }
     }
 

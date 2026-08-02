@@ -55,14 +55,14 @@ public sealed class Document
     }
 
     /// <summary>Replaces the whole document structure (used by history restore).</summary>
-    public void SetCanvasRaw(int width, int height, List<Layer> layers, byte[] selectionMask, int activeIndex)
+    public void SetCanvasRaw(int width, int height, List<Layer> layers, byte[]? selectionMask, int activeIndex)
     {
         Width = width;
         Height = height;
         Layers.Clear();
         Layers.AddRange(layers);
         Selection = new Selection(width, height);
-        if (selectionMask.Length == Selection.Mask.Length)
+        if (selectionMask != null && selectionMask.Length == Selection.Mask.Length)
             Selection.RestoreMask(selectionMask);
         ActiveLayerIndex = Math.Clamp(activeIndex, 0, Math.Max(0, Layers.Count - 1));
     }
