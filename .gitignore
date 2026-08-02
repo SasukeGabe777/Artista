@@ -1,0 +1,9 @@
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+OpenPDN-master/
+OpenPDN-master.zip
+Screenshot*.png
+_Untitled*.mp4

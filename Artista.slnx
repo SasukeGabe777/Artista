@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Artista.App/Artista.App.csproj" />
+    <Project Path="src/Artista.Core/Artista.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Artista.Tests/Artista.Tests.csproj" />
+  </Folder>
+</Solution>
