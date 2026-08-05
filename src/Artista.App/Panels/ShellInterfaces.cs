@@ -15,6 +15,8 @@ public interface IShellHost
     void InvalidateDocument(RectInt rect);
     void RefreshAllPanels();
     void SetStatus(string text);
+    void CommitActiveTool();
+    void ActivateLayer(int layerId);
 
     // Layer operations (implemented centrally so menus and panel share them).
     void LayerAdd();

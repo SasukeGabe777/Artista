@@ -21,7 +21,9 @@ public sealed class HistoryPanel : DockPanel
         {
             if (_refreshing || _host.ActiveWorkspace == null || _list.SelectedIndex < 0) return;
             // Item 0 = initial state → JumpTo(0); item N = after N actions.
-            _host.ActiveWorkspace.History.JumpTo(_list.SelectedIndex);
+            int targetIndex = _list.SelectedIndex;
+            _host.CommitActiveTool();
+            _host.ActiveWorkspace.History.JumpTo(targetIndex);
             _host.InvalidateDocument(_host.ActiveWorkspace.Document.Bounds);
             _host.RefreshAllPanels();
         };

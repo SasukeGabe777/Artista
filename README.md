@@ -6,7 +6,7 @@ A personal, Paint.NET-style raster image editor for Windows, built from scratch 
 
 ## Feature set
 
-- **Documents**: new (transparent / white / color background), open, save, save-as, export, multiple tabbed documents, unsaved-change indicators and close confirmation, recent files, drag-and-drop open, clipboard cut/copy/paste and paste-into-new-image, resize image, resize canvas (anchored), rotate 90/180, flip, crop to selection, image properties, configurable defaults.
+- **Documents**: new (transparent / white / color background), open, save, save-as, export, multiple tabbed documents, unsaved-change indicators and close confirmation, recent files, drag-and-drop Open/Add-layer choice, clipboard cut/copy/paste and paste-into-new-image, oversized-paste Expand/Keep-canvas choice, resize image, resize canvas (anchored), rotate 90/180, flip, crop to selection, image properties, configurable defaults.
 - **Formats**: PNG, JPEG, BMP, GIF, TIFF (WebP decodes when the Windows codec is installed; WIC cannot encode WebP). Native layered project format **`.artz`** (documented in `docs/PROJECT_FORMAT.md`).
 - **Canvas**: checkerboard transparency, cursor-centered wheel zoom (3%–6400%), fit-to-window / actual size, smooth panning (Space+drag, middle-drag, Pan tool), scrollbars, pixel grid at high zoom, optional rulers, animated marching-ants selection outline, live tool previews.
 - **Layers**: add / delete / duplicate / rename / reorder (buttons + drag), merge down, flatten, visibility, opacity, lock, alpha-lock, thumbnails, blend modes (Normal, Multiply, Screen, Overlay, Darken, Lighten, Difference, Additive).
@@ -28,7 +28,7 @@ A personal, Paint.NET-style raster image editor for Windows, built from scratch 
 
 ```cmd
 build.cmd        :: dotnet build Artista.slnx -c Release
-test.cmd         :: dotnet test tests\Artista.Tests -c Release   (81 core tests)
+test.cmd         :: dotnet test tests\Artista.Tests -c Release   (82 core tests)
 run.cmd          :: builds then starts the app
 ```
 
@@ -43,7 +43,7 @@ dotnet run --project src\Artista.App -c Release
 **Compiled executable:** `src\Artista.App\bin\Release\net10.0-windows\Artista.exe`
 (Debug builds land in `bin\Debug\net10.0-windows\Artista.exe`.)
 
-There is also an automated UI smoke test that drives the real window through 67 checks (documents, tools, effects, undo, save/reopen, themes, menus, dialogs, canvas panning, clipboard alpha, selection cancellation, and floating panels):
+There is also an automated UI smoke test that drives the real window through 86 checks (documents, tools, effects, undo, save/reopen, themes, menus, dialogs, exact-corner canvas panning, layer targeting, oversized paste, drag/drop, clipboard alpha, selection cancellation, and floating panels):
 
 ```cmd
 src\Artista.App\bin\Release\net10.0-windows\Artista.exe --uitest %TEMP%\artista-uitest
@@ -58,6 +58,7 @@ src\Artista.App\bin\Release\net10.0-windows\Artista.exe --uitest %TEMP%\artista-
 - `docs/PROJECT_FORMAT.md` — the `.artz` file format
 - `docs/BUILDING.md` — environment setup details
 - `docs/KEYBOARD_SHORTCUTS.md` — full shortcut list (also in-app: Help → Keyboard Shortcuts / F1)
+- `docs/AUDIT_2026-08-04.md` — compatibility and integrity audit covering canvas, layers, paste, drag/drop, history, and save workflows
 
 ## Settings
 

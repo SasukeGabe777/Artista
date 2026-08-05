@@ -730,6 +730,18 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
 
     public void NotifyLayersChanged() => RefreshAllPanels();
 
+    public void CommitActiveTool() => _activeTool?.OnCommit();
+
+    public void ActivateLayer(int layerId)
+    {
+        if (_active == null) return;
+        int index = _active.Document.IndexOfLayer(layerId);
+        if (index < 0) return;
+        CommitActiveTool();
+        _active.Document.ActiveLayerIndex = index;
+        SetStatus($"Active layer: {_active.Document.ActiveLayer.Name}");
+    }
+
     public void ViewZoomInAt(Point docPoint) =>
         _documentView.SetZoom(_documentView.Zoom * 1.5, _documentView.Canvas.DocToView(docPoint));
 

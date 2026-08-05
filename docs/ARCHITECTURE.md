@@ -36,7 +36,7 @@ Artista.slnx
 │   ├── MainWindow*.cs    shell layout, commands/menus, self-test harness
 │   ├── ThemeManager.cs   palette swap + DWM dark title bars
 │   └── AppSettings.cs    JSON settings in %AppData%\Artista
-└── tests/Artista.Tests   xUnit suite over Artista.Core (81 tests)
+└── tests/Artista.Tests   xUnit suite over Artista.Core (82 tests)
 ```
 
 ## Key design points

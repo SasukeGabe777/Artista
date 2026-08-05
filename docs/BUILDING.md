@@ -25,7 +25,7 @@ The repo's `build.cmd` / `test.cmd` / `run.cmd` find `dotnet` on PATH **or** in 
 | Task | Command |
 |---|---|
 | Build (Release) | `build.cmd` or `dotnet build Artista.slnx -c Release` |
-| Unit tests (81) | `test.cmd` or `dotnet test tests\Artista.Tests\Artista.Tests.csproj -c Release` |
+| Unit tests (82) | `test.cmd` or `dotnet test tests\Artista.Tests\Artista.Tests.csproj -c Release` |
 | Run | `run.cmd` or `dotnet run --project src\Artista.App -c Release` |
 | UI smoke test | `src\Artista.App\bin\Release\net10.0-windows\Artista.exe --uitest <outDir>` |
 

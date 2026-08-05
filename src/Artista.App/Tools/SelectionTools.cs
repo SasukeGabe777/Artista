@@ -338,6 +338,8 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     private byte[]? _selectionSnapshot;
     private int _layerId = -1;
     private bool _dragging;
+    private bool _externalFloat;
+    private bool _hasMoved;
     private Point _dragStartDoc;
     private int _dragStartOffsetX, _dragStartOffsetY;
 
@@ -381,6 +383,8 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         _selectionSnapshot = doc.Selection.SnapshotMask();
         _floatSourceRect = bounds;
         _offsetX = _offsetY = 0;
+        _externalFloat = false;
+        _hasMoved = false;
 
         _floating = new Surface(bounds.Width, bounds.Height);
         for (int y = 0; y < bounds.Height; y++)
@@ -393,11 +397,33 @@ public sealed class MoveSelectedPixelsTool : ToolBase
                 if (cov == 0) continue;
                 uint c = srcRow[x];
                 dstRow[x] = ColorBgra.WithAlpha(c, (byte)(ColorBgra.A(c) * cov / 255));
-                // Remove from the layer proportionally to coverage.
-                srcRow[x] = ColorBgra.WithAlpha(c, (byte)(ColorBgra.A(c) * (255 - cov) / 255));
             }
         }
-        Context.InvalidateDocument(bounds);
+        // Keep the source pixels exact until the pointer actually moves. The
+        // first MoveTo call restores/clears from the snapshot and stamps the
+        // floating pixels at their new position.
+        Context.InvalidateOverlay();
+    }
+
+    /// <summary>Starts an immediately movable paste while retaining source
+    /// pixels that extend outside the fixed document canvas.</summary>
+    public void BeginPaste(Surface source, Core.Layers.Layer layer, int originX, int originY)
+    {
+        var ws = Context.Workspace;
+        if (ws == null) return;
+        if (_floating != null) Commit();
+
+        _layerId = layer.Id;
+        _layerSnapshot = layer.Surface.Clone();
+        _floatSourceRect = new RectInt(originX, originY, source.Width, source.Height);
+        _offsetX = _offsetY = 0;
+        _floating = source;
+        _externalFloat = true;
+        _hasMoved = false;
+        SetSelectionToFloatRect();
+        _selectionSnapshot = ws.Document.Selection.SnapshotMask();
+        Context.NotifySelectionChanged();
+        Context.InvalidateDocument(_floatSourceRect.Intersect(ws.Document.Bounds));
     }
 
     public override void OnPointerMove(ToolPointerEventArgs e)
@@ -419,6 +445,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         var oldRect = FloatRect();
         _offsetX = newOffsetX;
         _offsetY = newOffsetY;
+        _hasMoved = true;
         var newRect = FloatRect();
 
         // Restore the layer under the old position (from cleared snapshot state),
@@ -428,8 +455,13 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         layer.Surface.DrawSurfaceOver(_floating, newRect.Left, newRect.Top);
 
         // Move the selection outline along with the pixels.
-        ws.Document.Selection.RestoreMask(_selectionSnapshot!);
-        ws.Document.Selection.Translate(_offsetX, _offsetY);
+        if (_externalFloat)
+            SetSelectionToFloatRect();
+        else
+        {
+            ws.Document.Selection.RestoreMask(_selectionSnapshot!);
+            ws.Document.Selection.Translate(_offsetX, _offsetY);
+        }
         Context.InvalidateDocument(dirty);
     }
 
@@ -475,11 +507,28 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     {
         var ws = Context.Workspace;
         if (ws == null || _selectionSnapshot == null) return;
-        // Selection outline = original selection translated by the offset.
-        ws.Document.Selection.RestoreMask(_selectionSnapshot);
-        ws.Document.Selection.Translate(_offsetX, _offsetY);
+        if (_externalFloat)
+            SetSelectionToFloatRect();
+        else
+        {
+            // Selection outline = original selection translated by the offset.
+            ws.Document.Selection.RestoreMask(_selectionSnapshot);
+            ws.Document.Selection.Translate(_offsetX, _offsetY);
+        }
         Context.NotifySelectionChanged();
         Context.InvalidateOverlay();
+    }
+
+    private void SetSelectionToFloatRect()
+    {
+        var ws = Context.Workspace;
+        if (ws == null) return;
+        var selection = ws.Document.Selection;
+        selection.Clear();
+        var visible = FloatRect().Intersect(ws.Document.Bounds);
+        for (int y = visible.Top; y < visible.Bottom; y++)
+            selection.Mask.AsSpan(y * selection.Width + visible.Left, visible.Width).Fill(255);
+        selection.MarkChanged();
     }
 
     public override bool OnKeyDown(Key key, ModifierKeys modifiers)
@@ -504,7 +553,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         var ws = Context.Workspace;
         if (_floating == null || ws == null) return;
         var layer = ws.Document.FindLayer(_layerId);
-        if (layer != null && _layerSnapshot != null && _selectionSnapshot != null)
+        if (_hasMoved && layer != null && _layerSnapshot != null && _selectionSnapshot != null)
         {
             // Layer pixels already reflect the final state; build one history step
             // covering the whole affected area plus the selection change.
@@ -518,11 +567,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
             Context.PushHistory(new CompositeMemento("Move Selected Pixels", mementos), IconKey);
             ws.MarkDirty();
         }
-        _floating = null;
-        _layerSnapshot = null;
-        _selectionSnapshot = null;
-        _layerId = -1;
-        _offsetX = _offsetY = 0;
+        ResetFloat();
         Context.NotifySelectionChanged();
     }
 
@@ -538,11 +583,19 @@ public sealed class MoveSelectedPixelsTool : ToolBase
                 ws.Document.Selection.RestoreMask(_selectionSnapshot);
             Context.InvalidateDocument(ws.Document.Bounds);
         }
+        ResetFloat();
+        Context.NotifySelectionChanged();
+    }
+
+    private void ResetFloat()
+    {
         _floating = null;
         _layerSnapshot = null;
         _selectionSnapshot = null;
         _layerId = -1;
         _offsetX = _offsetY = 0;
-        Context.NotifySelectionChanged();
+        _dragging = false;
+        _externalFloat = false;
+        _hasMoved = false;
     }
 }

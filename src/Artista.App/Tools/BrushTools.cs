@@ -75,7 +75,6 @@ public abstract class StrokeToolBase : ToolBase
         var applyRect = segment.Intersect(newDirty).Intersect(ws.Document.Bounds);
         if (applyRect.IsEmpty) return;
         ApplyStroke(layer, applyRect);
-        ws.MarkDirty();
         Context.InvalidateDocument(applyRect);
     }
 

@@ -83,6 +83,28 @@ public class HistoryTests
     }
 
     [Fact]
+    public void DivergentEditAtSavedDepthHasDifferentStateIdentity()
+    {
+        var doc = MakeDoc();
+        var history = new HistoryStack(doc);
+        var layer = doc.ActiveLayer;
+        var rect = new RectInt(0, 0, 1, 1);
+
+        var beforeA = layer.Surface.ExtractRect(rect);
+        layer.Surface[0, 0] = 0xFF000001u;
+        history.Push(new SurfaceRegionMemento("A", layer, rect, beforeA));
+        long savedState = history.CurrentStateId;
+
+        history.Undo();
+        var beforeB = layer.Surface.ExtractRect(rect);
+        layer.Surface[0, 0] = 0xFF000002u;
+        history.Push(new SurfaceRegionMemento("B", layer, rect, beforeB));
+
+        Assert.Single(history.UndoEntries);
+        Assert.NotEqual(savedState, history.CurrentStateId);
+    }
+
+    [Fact]
     public void LayerAddUndoRedo()
     {
         var doc = MakeDoc();

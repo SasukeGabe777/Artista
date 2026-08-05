@@ -407,9 +407,23 @@ public sealed partial class MainWindow
 
     private void OnFileDrop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetData(DataFormats.FileDrop) is string[] files)
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] dropped) return;
+        var files = dropped.Where(File.Exists).ToArray();
+        if (files.Length == 0) return;
+        e.Handled = true;
+
+        var dialog = new FileDropDialog(files.Length) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        if (dialog.Choice == FileDropChoice.Open)
+        {
             foreach (var file in files)
                 OpenFile(file);
+        }
+        else if (dialog.Choice == FileDropChoice.AddAsLayers)
+        {
+            foreach (var file in files)
+                ImportLayerFromPath(file);
+        }
     }
 
     public void OpenFile(string path)
@@ -486,6 +500,7 @@ public sealed partial class MainWindow
             DefaultExt = ".png",
         };
         if (dialog.ShowDialog(this) != true) return;
+        _activeTool?.OnCommit();
         try
         {
             var format = ImageCodec.FormatFromExtension(dialog.FileName) ?? ImageFormat.Png;
@@ -502,6 +517,8 @@ public sealed partial class MainWindow
     {
         try
         {
+            if (ReferenceEquals(ws, _active))
+                _activeTool?.OnCommit();
             string ext = Path.GetExtension(path).ToLowerInvariant();
             if (ext == ArtzFormat.Extension)
             {
@@ -621,7 +638,13 @@ public sealed partial class MainWindow
 
     private void EditCopy()
     {
-        if (_active == null) return;
+        TryCopyToClipboard();
+    }
+
+    private bool TryCopyToClipboard()
+    {
+        if (_active == null) return false;
+        _activeTool?.OnCommit();
         var doc = _active.Document;
         var bounds = doc.Selection.EffectiveBounds;
         var flat = doc.Flatten();
@@ -656,17 +679,19 @@ public sealed partial class MainWindow
             data.SetData("PNG", png);
             Clipboard.SetDataObject(data, copy: true);
             SetStatus("Copied.");
+            return true;
         }
         catch (Exception ex)
         {
             SetStatus($"Copy failed: {ex.Message}");
+            return false;
         }
     }
 
     private void EditCut()
     {
-        EditCopy();
-        DeleteSelectionPixels();
+        if (TryCopyToClipboard())
+            DeleteSelectionPixels();
     }
 
     private void DeleteSelectionPixels()
@@ -710,20 +735,65 @@ public sealed partial class MainWindow
             return;
         }
         var doc = _active.Document;
-        // Paste as a new layer, centered.
+        bool expandCanvas = false;
+        if (surface.Width > doc.Width || surface.Height > doc.Height)
+        {
+            var dialog = new PasteSizeDialog(surface) { Owner = this };
+            if (dialog.ShowDialog() != true || dialog.Choice == PasteSizeChoice.Cancel)
+            {
+                SetStatus("Paste cancelled.");
+                return;
+            }
+            expandCanvas = dialog.Choice == PasteSizeChoice.ExpandCanvas;
+        }
+        PasteSurface(surface, expandCanvas);
+    }
+
+    private void PasteSurface(Surface surface, bool expandCanvas)
+    {
+        if (_active == null) return;
+        _activeTool?.OnCommit();
+        var doc = _active.Document;
+        HistoryMemento pasteMemento;
+
+        if (expandCanvas)
+        {
+            pasteMemento = new DocumentStructureMemento("Paste", doc);
+            int newWidth = Math.Max(doc.Width, surface.Width);
+            int newHeight = Math.Max(doc.Height, surface.Height);
+            DocumentTransforms.ResizeCanvas(doc, newWidth, newHeight, AnchorPosition.TopLeft);
+        }
+        else
+        {
+            var selectionBefore = doc.Selection.SnapshotMask();
+            // The layer memento is constructed after the layer is created below.
+            pasteMemento = new SelectionMemento("Paste", selectionBefore);
+        }
+
+        int ox = (doc.Width - surface.Width) / 2;
+        int oy = (doc.Height - surface.Height) / 2;
         var layer = new Layer(doc.Width, doc.Height, "Pasted layer");
-        int ox = Math.Max(0, (doc.Width - surface.Width) / 2);
-        int oy = Math.Max(0, (doc.Height - surface.Height) / 2);
         layer.Surface.DrawSurfaceOver(surface, ox, oy);
         doc.Layers.Add(layer);
         doc.ActiveLayerIndex = doc.Layers.Count - 1;
-        PushHistory(new LayerAddedMemento("Paste", layer), "Icon.Paste");
+
+        if (!expandCanvas)
+        {
+            pasteMemento = new CompositeMemento("Paste", new HistoryMemento[]
+            {
+                new LayerAddedMemento("Paste", layer),
+                pasteMemento,
+            });
+        }
+
         _active.NotifyStructureChanged();
-        RefreshAllPanels();
-        // Switch to move tool so the pasted content can be repositioned.
-        SelectAll();
-        ActivateToolByType<MoveSelectedPixelsTool>();
-        SetStatus("Pasted as a new layer.");
+        var moveTool = _tools.OfType<MoveSelectedPixelsTool>().First();
+        ActivateTool(moveTool);
+        moveTool.BeginPaste(surface, layer, ox, oy);
+        PushHistory(pasteMemento, "Icon.Paste");
+        SetStatus(expandCanvas
+            ? "Pasted as a new layer and expanded the canvas."
+            : "Pasted as a movable layer. Press Enter to finish or Escape to reset its position.");
     }
 
     private void EditPasteIntoNewImage()
@@ -841,6 +911,7 @@ public sealed partial class MainWindow
     public void LayerAdd()
     {
         if (_active == null) return;
+        _activeTool?.OnCommit();
         var doc = _active.Document;
         var layer = new Layer(doc.Width, doc.Height, $"Layer {doc.Layers.Count + 1}");
         doc.Layers.Insert(doc.ActiveLayerIndex + 1, layer);
@@ -857,6 +928,7 @@ public sealed partial class MainWindow
             SetStatus("A document must keep at least one layer.");
             return;
         }
+        _activeTool?.OnCommit();
         var doc = _active.Document;
         int index = doc.ActiveLayerIndex;
         var layer = doc.Layers[index];
@@ -870,6 +942,7 @@ public sealed partial class MainWindow
     public void LayerDuplicate()
     {
         if (_active == null) return;
+        _activeTool?.OnCommit();
         var doc = _active.Document;
         var copy = doc.ActiveLayer.Clone(doc.ActiveLayer.Name + " copy");
         doc.Layers.Insert(doc.ActiveLayerIndex + 1, copy);
@@ -899,11 +972,13 @@ public sealed partial class MainWindow
         int from = doc.ActiveLayerIndex;
         int to = from + delta;
         if (to < 0 || to >= doc.Layers.Count) return;
+        _activeTool?.OnCommit();
         var layer = doc.Layers[from];
-        PushHistory(new LayerOrderMemento("Reorder Layers", layer.Id, from), delta > 0 ? "Icon.ArrowUp" : "Icon.ArrowDown");
+        var memento = new LayerOrderMemento("Reorder Layers", layer.Id, from);
         doc.Layers.RemoveAt(from);
         doc.Layers.Insert(to, layer);
         doc.ActiveLayerIndex = to;
+        PushHistory(memento, delta > 0 ? "Icon.ArrowUp" : "Icon.ArrowDown");
         _active.NotifyStructureChanged();
         RefreshAllPanels();
     }
@@ -911,6 +986,7 @@ public sealed partial class MainWindow
     public void LayerProperties()
     {
         if (_active == null) return;
+        _activeTool?.OnCommit();
         var layer = _active.Document.ActiveLayer;
         var dialog = new LayerPropertiesDialog(layer) { Owner = this };
         if (dialog.ShowDialog() != true) return;
@@ -932,21 +1008,36 @@ public sealed partial class MainWindow
         if (_active == null) return;
         var dialog = new OpenFileDialog { Filter = ImageCodec.OpenFilter };
         if (dialog.ShowDialog(this) != true) return;
+        ImportLayerFromPath(dialog.FileName);
+    }
+
+    private bool ImportLayerFromPath(string path)
+    {
+        if (_active == null) return false;
         try
         {
-            var surface = ImageCodec.Load(dialog.FileName);
+            _activeTool?.OnCommit();
+            var surface = Path.GetExtension(path).Equals(ArtzFormat.Extension, StringComparison.OrdinalIgnoreCase)
+                ? ArtzFormat.Load(path).Flatten()
+                : ImageCodec.Load(path);
             var doc = _active.Document;
-            var layer = new Layer(doc.Width, doc.Height, Path.GetFileNameWithoutExtension(dialog.FileName));
-            layer.Surface.DrawSurfaceOver(surface, 0, 0);
+            var layer = new Layer(doc.Width, doc.Height, Path.GetFileNameWithoutExtension(path));
+            int ox = (doc.Width - surface.Width) / 2;
+            int oy = (doc.Height - surface.Height) / 2;
+            layer.Surface.DrawSurfaceOver(surface, ox, oy);
             doc.Layers.Insert(doc.ActiveLayerIndex + 1, layer);
             doc.ActiveLayerIndex++;
             PushHistory(new LayerAddedMemento("Import Layer", layer), "Icon.Open");
             _active.NotifyStructureChanged();
             RefreshAllPanels();
+            SetStatus($"Added {Path.GetFileName(path)} as a layer.");
+            return true;
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Could not import:\n\n{ex.Message}", "Import layer", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, $"Could not import \"{Path.GetFileName(path)}\":\n\n{ex.Message}",
+                "Import layer", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
         }
     }
 

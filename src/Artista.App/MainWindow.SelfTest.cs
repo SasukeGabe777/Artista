@@ -170,6 +170,12 @@ public sealed partial class MainWindow
 
         // 8. Move selected pixels.
         var move = Tool<MoveSelectedPixelsTool>();
+        var beforeClickWithoutMove = (uint[])layer.Surface.Pixels.Clone();
+        move.OnPointerDown(Pt(200, 60));
+        move.OnPointerUp(Pt(200, 60));
+        move.Commit();
+        Check(layer.Surface.Pixels.SequenceEqual(beforeClickWithoutMove),
+            "clicking Move Selected Pixels without dragging preserves pixels");
         DragTool(move, 200, 60, 200, 130);
         move.Commit();
         await PumpAsync();
@@ -196,6 +202,16 @@ public sealed partial class MainWindow
         bucket.OnPointerDown(Pt(10, 10));
         await PumpAsync();
         Check(Core.Imaging.ColorBgra.A(topLayer.Surface[10, 10]) == 255, "bucket filled the new layer");
+        Check(_layersPanel.SelectLayer(layer.Id), "clicking a layer row activates that layer");
+        uint topPixelBeforeLayerStroke = topLayer.Surface[20, 220];
+        uint bottomPixelBeforeLayerStroke = layer.Surface[20, 220];
+        var layerBrush = Tool<PaintbrushTool>();
+        DragTool(layerBrush, 20, 220, 30, 220);
+        Check(layer.Surface[20, 220] != bottomPixelBeforeLayerStroke,
+            "drawing edits the selected non-top layer");
+        Check(topLayer.Surface[20, 220] == topPixelBeforeLayerStroke,
+            "drawing leaves the unselected top layer unchanged");
+        Check(_layersPanel.SelectLayer(topLayer.Id), "top layer can be reselected");
         topLayer.Opacity = 128;
         _active.InvalidateComposite(_active.Document.Bounds);
         LayerDelete();
@@ -284,6 +300,16 @@ public sealed partial class MainWindow
         Check(Math.Abs(_documentView.Canvas.OffsetX - panStartX) > 1 &&
               Math.Abs(_documentView.Canvas.OffsetY - panStartY) > 1,
             "middle-drag pan can move a canvas smaller than the viewport");
+        _documentView.PanBy(-100000, -100000);
+        Check(Math.Abs(_documentView.Canvas.OffsetX) < 0.01 &&
+              Math.Abs(_documentView.Canvas.OffsetY) < 0.01,
+            "canvas can be dragged flush into the top-left corner");
+        _documentView.PanBy(200000, 200000);
+        Check(Math.Abs(_documentView.Canvas.OffsetX -
+                       (_documentView.Canvas.ActualWidth - _active.Document.Width * _documentView.Zoom)) < 0.01 &&
+              Math.Abs(_documentView.Canvas.OffsetY -
+                       (_documentView.Canvas.ActualHeight - _active.Document.Height * _documentView.Zoom)) < 0.01,
+            "canvas can be dragged flush into the bottom-right corner");
         _documentView.CenterImage();
 
         // 17. Theme switching.
@@ -356,6 +382,66 @@ public sealed partial class MainWindow
         {
             Fail($"clipboard round trip threw: {ex.Message}");
         }
+
+        // 21bb. Oversized paste retains off-canvas pixels and can expand canvas.
+        try
+        {
+            var oversized = new Surface(80, 40);
+            uint edgeRed = Core.Imaging.ColorBgra.Pack(0, 0, 255, 255);
+            uint edgeBlue = Core.Imaging.ColorBgra.Pack(255, 0, 0, 255);
+            oversized[0, 10] = edgeRed;
+            oversized[79, 10] = edgeBlue;
+
+            CreateDocument(40, 40, "Transparent");
+            await PumpAsync();
+            PasteSurface(oversized, expandCanvas: false);
+            var keepDoc = _active!.Document;
+            var keepLayer = keepDoc.ActiveLayer;
+            var keepMove = (MoveSelectedPixelsTool)_activeTool!;
+            Check(keepDoc.Width == 40 && keepDoc.Height == 40,
+                "Keep canvas size leaves oversized-paste dimensions unchanged");
+            Check(keepMove.IsFloating, "oversized paste remains movable before commit");
+            DragTool(keepMove, 20, 20, 40, 20);
+            keepMove.Commit();
+            Check(keepLayer.Surface[0, 10] == edgeRed,
+                "moving oversized paste reveals pixels that began outside the canvas");
+            Undo();
+            Check(keepLayer.Surface[0, 10] == 0,
+                "undo restores oversized paste to its initial centered position");
+            Redo();
+            Check(keepLayer.Surface[0, 10] == edgeRed,
+                "redo restores the moved oversized paste");
+            CloseWorkspace(_active);
+            await PumpAsync();
+
+            CreateDocument(40, 40, "Transparent");
+            await PumpAsync();
+            PasteSurface(oversized, expandCanvas: true);
+            var expandMove = (MoveSelectedPixelsTool)_activeTool!;
+            expandMove.Commit();
+            Check(_active!.Document.Width == 80 && _active.Document.Height == 40,
+                "Expand canvas grows the document to fit pasted pixels");
+            Check(_active.Document.ActiveLayer.Surface[0, 10] == edgeRed &&
+                  _active.Document.ActiveLayer.Surface[79, 10] == edgeBlue,
+                "expanded paste retains both source edges");
+            Undo();
+            Check(_active.Document.Width == 40 && _active.Document.Height == 40,
+                "undo restores canvas dimensions from expanded paste");
+            CloseWorkspace(_active);
+            await PumpAsync();
+        }
+        catch (Exception ex)
+        {
+            Fail($"oversized paste workflows threw: {ex.Message}");
+        }
+
+        int layersBeforeDroppedImport = _active!.Document.Layers.Count;
+        bool importedDroppedLayer = ImportLayerFromPath(pngPath);
+        Check(importedDroppedLayer && _active.Document.Layers.Count == layersBeforeDroppedImport + 1,
+            "drag/drop Add layer imports into the current document");
+        Check(_active.Document.ActiveLayer.Name == Path.GetFileNameWithoutExtension(pngPath),
+            "drag/drop imported layer becomes active");
+        Undo();
 
         // 21c. Click-to-deselect and Escape cancel/deselect behavior.
         var wand2 = Tool<MagicWandTool>();
@@ -443,6 +529,23 @@ public sealed partial class MainWindow
         Check(newDlg.IsVisible, "new document dialog opened");
         SnapshotVisual(newDlg, "12-new-dialog");
         newDlg.Close();
+
+        // 25. Paint.NET-style paste and drag/drop choice dialogs render.
+        var choicePreview = new Surface(80, 50);
+        choicePreview.Clear(Core.Imaging.ColorBgra.Pack(30, 120, 210, 255));
+        var pasteChoiceDlg = new Dialogs.PasteSizeDialog(choicePreview) { Owner = this };
+        pasteChoiceDlg.Show();
+        await PumpAsync(100);
+        Check(pasteChoiceDlg.IsVisible, "oversized-paste choice dialog opened");
+        SnapshotVisual(pasteChoiceDlg, "14-paste-choice-dialog");
+        pasteChoiceDlg.Close();
+
+        var dropChoiceDlg = new Dialogs.FileDropDialog(1) { Owner = this };
+        dropChoiceDlg.Show();
+        await PumpAsync(100);
+        Check(dropChoiceDlg.IsVisible, "drag-and-drop choice dialog opened");
+        SnapshotVisual(dropChoiceDlg, "15-drop-choice-dialog");
+        dropChoiceDlg.Close();
     }
 
     private void SnapshotVisual(FrameworkElement element, string name)

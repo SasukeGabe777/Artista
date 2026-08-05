@@ -12,6 +12,12 @@ public sealed class HistoryStack
     private readonly Document _document;
     private readonly List<HistoryEntry> _undo = new();
     private readonly List<HistoryEntry> _redo = new();
+    private long _nextStateId;
+
+    /// <summary>Stable identity of the document state at the current history
+    /// position. Unlike undo depth, this changes when a new branch replaces
+    /// redo history.</summary>
+    public long CurrentStateId { get; private set; }
 
     /// <summary>Maximum bytes retained across all mementos (default 512 MB).</summary>
     public long MemoryLimit { get; set; } = 512L * 1024 * 1024;
@@ -32,8 +38,11 @@ public sealed class HistoryStack
     /// <summary>Records a completed, already-applied action.</summary>
     public void Push(HistoryMemento memento, string? iconKey = null)
     {
-        _undo.Add(new HistoryEntry(memento.Name, memento, iconKey));
+        long beforeStateId = CurrentStateId;
+        long afterStateId = ++_nextStateId;
+        _undo.Add(new HistoryEntry(memento.Name, memento, iconKey, beforeStateId, afterStateId));
         _redo.Clear();
+        CurrentStateId = afterStateId;
         TrimToBudget();
         Changed?.Invoke(this, EventArgs.Empty);
     }
@@ -44,7 +53,8 @@ public sealed class HistoryStack
         var entry = _undo[^1];
         _undo.RemoveAt(_undo.Count - 1);
         var inverse = entry.Memento.Apply(_document);
-        _redo.Add(new HistoryEntry(entry.Name, inverse, entry.IconKey));
+        _redo.Add(new HistoryEntry(entry.Name, inverse, entry.IconKey, entry.BeforeStateId, entry.AfterStateId));
+        CurrentStateId = entry.BeforeStateId;
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -54,7 +64,8 @@ public sealed class HistoryStack
         var entry = _redo[^1];
         _redo.RemoveAt(_redo.Count - 1);
         var inverse = entry.Memento.Apply(_document);
-        _undo.Add(new HistoryEntry(entry.Name, inverse, entry.IconKey));
+        _undo.Add(new HistoryEntry(entry.Name, inverse, entry.IconKey, entry.BeforeStateId, entry.AfterStateId));
+        CurrentStateId = entry.AfterStateId;
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -92,4 +103,9 @@ public sealed class HistoryStack
     }
 }
 
-public sealed record HistoryEntry(string Name, HistoryMemento Memento, string? IconKey);
+public sealed record HistoryEntry(
+    string Name,
+    HistoryMemento Memento,
+    string? IconKey,
+    long BeforeStateId,
+    long AfterStateId);

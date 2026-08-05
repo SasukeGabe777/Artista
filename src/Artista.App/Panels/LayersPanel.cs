@@ -37,11 +37,8 @@ public sealed class LayersPanel : DockPanel
 
         _list.SelectionChanged += (_, _) =>
         {
-            if (_refreshing || _host.ActiveWorkspace == null || _list.SelectedItem is not LayerRow row) return;
-            var doc = _host.ActiveWorkspace.Document;
-            int index = doc.IndexOfLayer(row.Layer.Id);
-            if (index >= 0)
-                doc.ActiveLayerIndex = index;
+            if (_refreshing || _list.SelectedItem is not ListBoxItem { Tag: LayerRow row }) return;
+            _host.ActivateLayer(row.Layer.Id);
         };
         _list.PreviewMouseLeftButtonDown += OnListMouseDown;
         _list.PreviewMouseMove += OnListMouseMove;
@@ -97,6 +94,17 @@ public sealed class LayersPanel : DockPanel
         }
     }
 
+    internal bool SelectLayer(int layerId)
+    {
+        foreach (var item in _list.Items.OfType<ListBoxItem>())
+        {
+            if (item.Tag is not LayerRow row || row.Layer.Id != layerId) continue;
+            _list.SelectedItem = item;
+            return _host.ActiveWorkspace?.Document.ActiveLayer.Id == layerId;
+        }
+        return false;
+    }
+
     private FrameworkElement BuildRow(Layer layer)
     {
         var grid = new DockPanel { Height = 40, LastChildFill = true };
@@ -112,6 +120,7 @@ public sealed class LayersPanel : DockPanel
         {
             var ws = _host.ActiveWorkspace;
             if (ws == null) return;
+            _host.CommitActiveTool();
             // Capture the memento first, mutate second, push last: PushHistory
             // refreshes this panel, which must see the NEW state.
             var memento = new LayerPropertiesMemento("Layer Visibility", layer);
@@ -217,12 +226,13 @@ public sealed class LayersPanel : DockPanel
         if (fromDoc < 0 || toDoc < 0 || fromDoc >= doc.Layers.Count || toDoc >= doc.Layers.Count) return;
 
         var layer = doc.Layers[fromDoc];
-        _host.PushHistory(new LayerOrderMemento("Reorder Layers", layer.Id, fromDoc), "Icon.ArrowUp");
+        _host.ActivateLayer(layer.Id);
+        var memento = new LayerOrderMemento("Reorder Layers", layer.Id, fromDoc);
         doc.Layers.RemoveAt(fromDoc);
         doc.Layers.Insert(toDoc, layer);
         doc.ActiveLayerIndex = toDoc;
-        ws.MarkDirty();
         _dragSourceIndex = overIndex;
+        _host.PushHistory(memento, "Icon.ArrowUp");
         _host.InvalidateDocument(doc.Bounds);
         _host.RefreshAllPanels();
     }

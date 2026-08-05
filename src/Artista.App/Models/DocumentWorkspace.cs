@@ -21,8 +21,9 @@ public sealed class DocumentWorkspace
     public string? FilePath { get; set; }
     public bool IsDirty { get; private set; }
 
-    /// <summary>History count at last save, to clear dirty on undo back to saved state.</summary>
-    private int _savedHistoryMark;
+    /// <summary>Unique history state at last save, so divergent branches at
+    /// the same undo depth are still recognized as modified.</summary>
+    private long _savedStateId;
 
     public double ZoomFactor { get; set; } = 1.0;
     public double ScrollX { get; set; }
@@ -65,7 +66,7 @@ public sealed class DocumentWorkspace
 
     public void MarkSaved()
     {
-        _savedHistoryMark = History.UndoEntries.Count;
+        _savedStateId = History.CurrentStateId;
         if (IsDirty)
         {
             IsDirty = false;
@@ -75,7 +76,7 @@ public sealed class DocumentWorkspace
 
     private void UpdateDirtyFromHistory()
     {
-        bool dirty = History.UndoEntries.Count != _savedHistoryMark;
+        bool dirty = History.CurrentStateId != _savedStateId;
         if (dirty != IsDirty)
         {
             IsDirty = dirty;

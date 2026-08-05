@@ -191,16 +191,13 @@ public sealed class DocumentView : Grid
         double imgW = Workspace.Document.Width * Zoom;
         double imgH = Workspace.Document.Height * Zoom;
         double viewW = Canvas.ActualWidth, viewH = Canvas.ActualHeight;
-        const double slack = 48; // let the user push the image a bit past the edge
-
-        // Use the same padded bounds for images both larger and smaller than
-        // the viewport. The old small-image branch forcibly re-centered the
-        // canvas on every move, which made middle-drag and the Pan tool appear
-        // nonfunctional at common zoom levels.
-        double xEdgeA = slack;
-        double xEdgeB = viewW - imgW - slack;
-        double yEdgeA = slack;
-        double yEdgeB = viewH - imgH - slack;
+        // Paint.NET lets either edge of the canvas align directly with the
+        // corresponding viewport edge. This works for images both larger and
+        // smaller than the viewport and permits all four corner positions.
+        double xEdgeA = 0;
+        double xEdgeB = viewW - imgW;
+        double yEdgeA = 0;
+        double yEdgeB = viewH - imgH;
         Canvas.OffsetX = Math.Clamp(Canvas.OffsetX, Math.Min(xEdgeA, xEdgeB), Math.Max(xEdgeA, xEdgeB));
         Canvas.OffsetY = Math.Clamp(Canvas.OffsetY, Math.Min(yEdgeA, yEdgeB), Math.Max(yEdgeA, yEdgeB));
     }
