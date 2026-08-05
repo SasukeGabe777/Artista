@@ -34,6 +34,9 @@ public sealed class CanvasView : FrameworkElement
     public CanvasView()
     {
         SnapsToDevicePixels = true;
+        // The document is drawn at arbitrary zoom/offset and must never paint
+        // outside the canvas area (over toolbars, tabs or rulers).
+        ClipToBounds = true;
         _antsTimer = new DispatcherTimer(DispatcherPriority.Render)
         {
             Interval = TimeSpan.FromMilliseconds(100),

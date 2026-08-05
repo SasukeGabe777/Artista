@@ -15,6 +15,8 @@ namespace Artista.App.Tools;
 public abstract class ShapeToolBase : ToolBase
 {
     protected bool Dragging;
+
+    public override bool IsBusy => Dragging;
     protected Point Start, Current;
     private Surface? _snapshot;
     private RectInt _lastDirty = RectInt.Empty;
@@ -161,6 +163,7 @@ public sealed class LineCurveTool : ShapeToolBase
 public sealed class CurveTool : ToolBase
 {
     public override string Name => "Curve";
+    public override bool IsBusy => _points.Count > 0;
     public override string IconKey => "Icon.Line";
     public override ToolSettingKind[] SettingsBar => new[]
     {
@@ -315,6 +318,7 @@ public sealed class EllipseShapeTool : ShapeToolBase
 public sealed class FreeformShapeTool : ToolBase
 {
     public override string Name => "Freeform Shape";
+    public override bool IsBusy => _dragging;
     public override string IconKey => "Icon.Freeform";
     public override ToolSettingKind[] SettingsBar => new[]
     {
@@ -392,6 +396,14 @@ public sealed class FreeformShapeTool : ToolBase
         }
         _snapshot = null;
         _points.Clear();
+    }
+
+    public override void OnCancel()
+    {
+        _dragging = false;
+        _snapshot = null;
+        _points.Clear();
+        Context.InvalidateOverlay();
     }
 
     public override void OnRenderOverlay(DrawingContext dc, CanvasTransform t)

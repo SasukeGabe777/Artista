@@ -112,8 +112,11 @@ public sealed class LayersPanel : DockPanel
         {
             var ws = _host.ActiveWorkspace;
             if (ws == null) return;
-            _host.PushHistory(new LayerPropertiesMemento("Layer Visibility", layer));
+            // Capture the memento first, mutate second, push last: PushHistory
+            // refreshes this panel, which must see the NEW state.
+            var memento = new LayerPropertiesMemento("Layer Visibility", layer);
             layer.Visible = visible.IsChecked == true;
+            _host.PushHistory(memento);
             ws.MarkDirty();
             _host.InvalidateDocument(ws.Document.Bounds);
         };

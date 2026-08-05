@@ -4,6 +4,17 @@ using System.Text.Json.Serialization;
 
 namespace Artista.App;
 
+/// <summary>Placement of one side panel (Colors / History / Layers).</summary>
+public sealed class PanelState
+{
+    public bool Docked { get; set; }
+    public bool Visible { get; set; } = true;
+    public double X { get; set; }
+    public double Y { get; set; }
+    public double Width { get; set; }
+    public double Height { get; set; }
+}
+
 /// <summary>
 /// Persisted application settings (JSON in %AppData%\Artista\settings.json).
 /// </summary>
@@ -20,6 +31,7 @@ public sealed class AppSettings
     public bool ShowPixelGrid { get; set; } = true;
     public bool ShowRulers { get; set; }
     public int JpegQuality { get; set; } = 92;
+    public Dictionary<string, PanelState> Panels { get; set; } = new();
 
     [JsonIgnore]
     public static string FilePath => Path.Combine(

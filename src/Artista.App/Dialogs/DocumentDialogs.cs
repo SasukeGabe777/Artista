@@ -174,7 +174,7 @@ public sealed class LayerPropertiesDialog : DialogBase
     private readonly TextBlock _opacityValue = new() { Width = 36, VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Right };
 
     public string LayerName => _name.Text.Trim().Length == 0 ? "Layer" : _name.Text.Trim();
-    public byte Opacity => (byte)Math.Clamp(Math.Round(_opacity.Value * 255 / 100), 0, 255);
+    public byte LayerOpacity => (byte)Math.Clamp(Math.Round(_opacity.Value * 255 / 100), 0, 255);
     public Core.Layers.BlendMode Blend => (Core.Layers.BlendMode)_blend.SelectedIndex;
     public bool LayerVisible => _visible.IsChecked == true;
     public bool LayerLocked => _locked.IsChecked == true;

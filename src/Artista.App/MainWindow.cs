@@ -55,7 +55,13 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         UseLayoutRounding = true;
         TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
         ThemeManager.ApplyTitleBar(this);
-        ThemeManager.ThemeChanged += (_, _) => ThemeManager.ApplyTitleBar(this);
+        ThemeManager.ThemeChanged += (_, _) =>
+        {
+            ThemeManager.ApplyTitleBar(this);
+            foreach (var site in _panelSites)
+                if (site.Window != null)
+                    ThemeManager.ApplyTitleBar(site.Window);
+        };
 
         _tools = ToolRegistry.CreateTools();
         foreach (var tool in _tools)
@@ -90,6 +96,10 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
     {
         var root = new DockPanel();
 
+        // Panel sites must exist before the View menu (its toggle items
+        // reference them); the dock grid is added to the layout further down.
+        var panelsGrid = BuildRightPanels();
+
         _menuBar = BuildMenu();
         DockPanel.SetDock(_menuBar, Dock.Top);
         root.Children.Add(_menuBar);
@@ -120,10 +130,9 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         DockPanel.SetDock(paletteBorder, Dock.Left);
         root.Children.Add(paletteBorder);
 
-        // Right panels.
-        var panels = BuildRightPanels();
-        DockPanel.SetDock(panels, Dock.Right);
-        root.Children.Add(panels);
+        // Right dock column (holds whichever panels the user snaps in).
+        DockPanel.SetDock(panelsGrid, Dock.Right);
+        root.Children.Add(panelsGrid);
 
         // Center: tab strip + document view.
         var center = new DockPanel();
@@ -169,45 +178,247 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         return border;
     }
 
+    // ---------------- dockable / floating panels ----------------
+
+    private sealed class PanelSite
+    {
+        public string Name = "";
+        public string Title = "";
+        public FrameworkElement Content = null!;
+        public FloatingPanelWindow? Window;
+        public ScrollViewer? DockHost;
+        public PanelState State = new();
+        public MenuItem? MenuItem;
+        public Rect DefaultFloatRect; // offsets relative to the main window
+    }
+
+    private readonly List<PanelSite> _panelSites = new();
+    private readonly Grid _rightDock = new();
+
     private Grid BuildRightPanels()
     {
-        var grid = new Grid { Width = 280 };
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.4, GridUnitType.Star) });
-
         _colorsPanel = new ColorsPanel(this);
         _historyPanel = new HistoryPanel(this);
         _layersPanel = new LayersPanel(this);
 
-        var colors = PanelBox("Colors", _colorsPanel);
-        var history = PanelBox("History", _historyPanel);
-        var layers = PanelBox("Layers", _layersPanel);
-        Grid.SetRow(colors, 0);
-        Grid.SetRow(history, 1);
-        Grid.SetRow(layers, 2);
-        grid.Children.Add(colors);
-        grid.Children.Add(history);
-        grid.Children.Add(layers);
-        return grid;
+        _panelSites.Add(new PanelSite
+        {
+            Name = "colors", Title = "Colors", Content = _colorsPanel,
+            DefaultFloatRect = new Rect(80, -540, 310, 470),   // negative Y = from bottom
+        });
+        _panelSites.Add(new PanelSite
+        {
+            Name = "history", Title = "History", Content = _historyPanel,
+            DefaultFloatRect = new Rect(-340, 130, 300, 240),  // negative X = from right
+        });
+        _panelSites.Add(new PanelSite
+        {
+            Name = "layers", Title = "Layers", Content = _layersPanel,
+            DefaultFloatRect = new Rect(-340, 400, 300, 330),
+        });
+
+        foreach (var site in _panelSites)
+        {
+            if (App.Settings.Panels.TryGetValue(site.Name, out var saved))
+                site.State = saved;
+            // Panels are FLOATING by default (Paint.NET style).
+        }
+
+        // Floating windows can only be created/positioned once the main window
+        // is shown; the dock column can build immediately.
+        RebuildDock();
+        Loaded += (_, _) =>
+        {
+            foreach (var site in _panelSites.Where(s => !s.State.Docked && s.State.Visible))
+                FloatSite(site, initial: true);
+        };
+        return _rightDock;
     }
 
-    private static Border PanelBox(string title, UIElement content)
+    private void RebuildDock()
     {
-        var outer = new Border { BorderThickness = new Thickness(1, 0, 0, 1), Margin = new Thickness(0) };
+        // Detach docked content first.
+        foreach (var site in _panelSites)
+        {
+            if (site.DockHost != null)
+            {
+                site.DockHost.Content = null;
+                site.DockHost = null;
+            }
+        }
+        _rightDock.Children.Clear();
+        _rightDock.RowDefinitions.Clear();
+
+        var docked = _panelSites.Where(s => s.State.Docked && s.State.Visible).ToList();
+        _rightDock.Width = docked.Count == 0 ? 0 : 280;
+        int row = 0;
+        foreach (var site in docked)
+        {
+            _rightDock.RowDefinitions.Add(site.Name == "colors"
+                ? new RowDefinition { Height = GridLength.Auto }
+                : new RowDefinition { Height = new GridLength(site.Name == "layers" ? 1.3 : 1, GridUnitType.Star) });
+            var box = BuildDockBox(site);
+            Grid.SetRow(box, row++);
+            _rightDock.Children.Add(box);
+        }
+    }
+
+    private Border BuildDockBox(PanelSite site)
+    {
+        var outer = new Border { BorderThickness = new Thickness(1, 0, 0, 1) };
         outer.SetResourceReference(Border.BackgroundProperty, "PanelBackgroundBrush");
         outer.SetResourceReference(Border.BorderBrushProperty, "BorderLightBrush");
         var dock = new DockPanel();
-        var header = new Border { Padding = new Thickness(8, 4, 8, 4) };
+        var header = new Border { Padding = new Thickness(8, 3, 4, 3) };
         header.SetResourceReference(Border.BackgroundProperty, "PanelHeaderBrush");
-        var headerText = new TextBlock { Text = title, FontWeight = FontWeights.SemiBold };
-        header.Child = headerText;
+        var headerRow = new DockPanel();
+        var headerText = new TextBlock { Text = site.Title, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
+
+        Button HeaderButton(string glyph, string tip)
+        {
+            return new Button
+            {
+                Content = glyph, FontSize = 11, Width = 22, Height = 20,
+                Padding = new Thickness(0), Margin = new Thickness(2, 0, 0, 0),
+                BorderThickness = new Thickness(0), Background = System.Windows.Media.Brushes.Transparent,
+                ToolTip = tip,
+            };
+        }
+        var closeButton = HeaderButton("✕", "Hide panel (reopen from the View menu)");
+        closeButton.Click += (_, _) => SetPanelVisible(site, false);
+        var floatButton = HeaderButton("⇱", "Float as a separate window");
+        floatButton.Click += (_, _) => FloatSite(site);
+        DockPanel.SetDock(closeButton, Dock.Right);
+        DockPanel.SetDock(floatButton, Dock.Right);
+        headerRow.Children.Add(closeButton);
+        headerRow.Children.Add(floatButton);
+        headerRow.Children.Add(headerText);
+        header.Child = headerRow;
         DockPanel.SetDock(header, Dock.Top);
         dock.Children.Add(header);
-        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = content };
-        dock.Children.Add(scroll);
+
+        site.DockHost = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = site.Content };
+        dock.Children.Add(site.DockHost);
         outer.Child = dock;
         return outer;
+    }
+
+    private void FloatSite(PanelSite site, bool initial = false)
+    {
+        site.State.Docked = false;
+        site.State.Visible = true;
+        // Detach from the dock.
+        if (site.DockHost != null)
+        {
+            site.DockHost.Content = null;
+            site.DockHost = null;
+        }
+        RebuildDock();
+
+        if (site.Window == null)
+        {
+            site.Window = new FloatingPanelWindow(site.Title, this);
+            site.Window.DockRequested += (_, _) => DockSite(site);
+            site.Window.HideRequested += (_, _) => SetPanelVisible(site, false);
+            ApplyShortcuts(site.Window.InputBindings);
+        }
+        site.Window.PanelContent = site.Content;
+
+        if (site.State.Width > 50)
+        {
+            site.Window.Left = site.State.X;
+            site.Window.Top = site.State.Y;
+            site.Window.Width = site.State.Width;
+            site.Window.Height = site.State.Height;
+        }
+        else
+        {
+            var r = site.DefaultFloatRect;
+            site.Window.Left = Left + (r.X >= 0 ? r.X : ActualWidth + r.X);
+            site.Window.Top = Top + (r.Y >= 0 ? r.Y : ActualHeight + r.Y);
+            site.Window.Width = r.Width;
+            site.Window.Height = r.Height;
+        }
+        site.Window.Show();
+        SyncPanelMenuChecks();
+        if (!initial)
+            SavePanelStates();
+    }
+
+    private void DockSite(PanelSite site)
+    {
+        site.State.Docked = true;
+        if (site.Window != null)
+        {
+            site.State.X = site.Window.Left;
+            site.State.Y = site.Window.Top;
+            site.State.Width = site.Window.Width;
+            site.State.Height = site.Window.Height;
+            site.Window.PanelContent = null;
+            site.Window.Hide();
+        }
+        RebuildDock();
+        SyncPanelMenuChecks();
+        SavePanelStates();
+    }
+
+    private void SetPanelVisible(PanelSite site, bool visible)
+    {
+        site.State.Visible = visible;
+        if (site.State.Docked)
+        {
+            RebuildDock();
+        }
+        else if (site.Window != null)
+        {
+            if (visible)
+            {
+                site.Window.PanelContent = site.Content;
+                site.Window.Show();
+            }
+            else
+            {
+                site.Window.Hide();
+            }
+        }
+        else if (visible)
+        {
+            FloatSite(site);
+        }
+        SyncPanelMenuChecks();
+        SavePanelStates();
+    }
+
+    private void TogglePanel(string name)
+    {
+        var site = _panelSites.FirstOrDefault(s => s.Name == name);
+        if (site != null)
+            SetPanelVisible(site, !site.State.Visible);
+    }
+
+    private void SyncPanelMenuChecks()
+    {
+        foreach (var site in _panelSites)
+        {
+            if (site.MenuItem != null)
+                site.MenuItem.IsChecked = site.State.Visible;
+        }
+    }
+
+    private void SavePanelStates()
+    {
+        foreach (var site in _panelSites)
+        {
+            if (!site.State.Docked && site.Window is { IsVisible: true })
+            {
+                site.State.X = site.Window.Left;
+                site.State.Y = site.Window.Top;
+                site.State.Width = site.Window.Width;
+                site.State.Height = site.Window.Height;
+            }
+            App.Settings.Panels[site.Name] = site.State;
+        }
+        App.Settings.Save();
     }
 
     private StatusBar BuildStatusBar()
@@ -572,7 +783,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         {
             if (e.Key == Key.Escape)
             {
-                _activeTool.OnCancel();
+                CancelActiveOperationOrDeselect();
                 InvalidateOverlay();
                 e.Handled = true;
                 return;
@@ -615,6 +826,14 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
                 case Key.Delete: DeleteSelectionPixels(); e.Handled = true; break;
             }
         }
+    }
+
+    private void CancelActiveOperationOrDeselect()
+    {
+        if (_activeTool?.IsBusy == true)
+            _activeTool.OnCancel();
+        else if (_active != null && !_active.Document.Selection.IsEmpty)
+            Deselect();
     }
 
     private void ActivateToolByType<T>() where T : ToolBase

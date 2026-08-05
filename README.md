@@ -43,7 +43,7 @@ dotnet run --project src\Artista.App -c Release
 **Compiled executable:** `src\Artista.App\bin\Release\net10.0-windows\Artista.exe`
 (Debug builds land in `bin\Debug\net10.0-windows\Artista.exe`.)
 
-There is also an automated UI smoke test that drives the real window through ~50 checks (documents, tools, effects, undo, save/reopen, themes, menus, dialogs):
+There is also an automated UI smoke test that drives the real window through 66 checks (documents, tools, effects, undo, save/reopen, themes, menus, dialogs, clipboard alpha, selection cancellation, and floating panels):
 
 ```cmd
 src\Artista.App\bin\Release\net10.0-windows\Artista.exe --uitest %TEMP%\artista-uitest

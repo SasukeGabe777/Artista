@@ -31,6 +31,8 @@ public sealed class TextTool : ToolBase
 
     public bool IsEditing => _editing;
 
+    public override bool IsBusy => _editing;
+
     public override void OnActivated()
     {
         _caretTimer = new System.Windows.Threading.DispatcherTimer

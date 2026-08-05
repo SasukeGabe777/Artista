@@ -148,6 +148,22 @@ public sealed partial class MainWindow
         theme.Items.Add(_themeSystem);
         view.Items.Add(theme);
         SyncThemeChecks();
+
+        view.Items.Add(new Separator());
+        foreach (var (name, header, gesture) in new[]
+        {
+            ("colors", "_Colors panel", "F8"),
+            ("history", "H_istory panel", "F6"),
+            ("layers", "La_yers panel", "F7"),
+        })
+        {
+            var site = _panelSites.FirstOrDefault(s => s.Name == name);
+            var item = new MenuItem { Header = header, InputGestureText = gesture, IsCheckable = true, IsChecked = site?.State.Visible ?? true };
+            string captured = name;
+            item.Click += (_, _) => TogglePanel(captured);
+            if (site != null) site.MenuItem = item;
+            view.Items.Add(item);
+        }
         return view;
     }
 
@@ -285,13 +301,19 @@ public sealed partial class MainWindow
 
     // ---------------- keyboard shortcuts ----------------
 
+    private readonly List<(Key Key, ModifierKeys Mods, Action Action)> _shortcuts = new();
+
+    /// <summary>Applies the shared shortcut set to a window's input bindings
+    /// (the main window and every floating panel window).</summary>
+    private void ApplyShortcuts(InputBindingCollection bindings)
+    {
+        foreach (var (key, mods, action) in _shortcuts)
+            bindings.Add(new KeyBinding(new RelayCommand(action), key, mods));
+    }
+
     private void RegisterShortcuts()
     {
-        void Bind(Key key, ModifierKeys mods, Action action)
-        {
-            var command = new RelayCommand(action);
-            InputBindings.Add(new KeyBinding(command, key, mods));
-        }
+        void Bind(Key key, ModifierKeys mods, Action action) => _shortcuts.Add((key, mods, action));
         Bind(Key.N, ModifierKeys.Control, FileNew);
         Bind(Key.O, ModifierKeys.Control, FileOpen);
         Bind(Key.S, ModifierKeys.Control, FileSave);
@@ -307,6 +329,7 @@ public sealed partial class MainWindow
         Bind(Key.V, ModifierKeys.Control | ModifierKeys.Alt, EditPasteIntoNewImage);
         Bind(Key.A, ModifierKeys.Control, SelectAll);
         Bind(Key.A, ModifierKeys.Control | ModifierKeys.Shift, Deselect);
+        Bind(Key.D, ModifierKeys.Control, Deselect); // Paint.NET's deselect
         Bind(Key.I, ModifierKeys.Control, InvertSelection);
         Bind(Key.R, ModifierKeys.Control, ResizeImage);
         Bind(Key.R, ModifierKeys.Control | ModifierKeys.Shift, ResizeCanvas);
@@ -319,6 +342,10 @@ public sealed partial class MainWindow
         Bind(Key.B, ModifierKeys.Control, () => { _documentView.FitToWindow(); UpdateZoomStatus(); });
         Bind(Key.D1, ModifierKeys.Control | ModifierKeys.Shift, () => { _documentView.ActualSize(); UpdateZoomStatus(); });
         Bind(Key.F1, ModifierKeys.None, () => new ShortcutsDialog { Owner = this }.ShowDialog());
+        Bind(Key.F6, ModifierKeys.None, () => TogglePanel("history"));
+        Bind(Key.F7, ModifierKeys.None, () => TogglePanel("layers"));
+        Bind(Key.F8, ModifierKeys.None, () => TogglePanel("colors"));
+        ApplyShortcuts(InputBindings);
     }
 
     private sealed class RelayCommand : ICommand
@@ -564,6 +591,7 @@ public sealed partial class MainWindow
                 return;
             }
         }
+        SavePanelStates();
         App.Settings.Save();
     }
 
@@ -615,7 +643,18 @@ public sealed partial class MainWindow
         }
         try
         {
-            Clipboard.SetImage(ImageCodec.ToBitmapSource(region) as BitmapSource);
+            // Standard bitmap for other apps + "PNG" format so transparency
+            // survives a round trip (plain DIBs have no alpha channel).
+            var data = new DataObject();
+            var source = ImageCodec.ToBitmapSource(region);
+            data.SetImage(source);
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(source));
+            var png = new MemoryStream();
+            encoder.Save(png);
+            png.Position = 0;
+            data.SetData("PNG", png);
+            Clipboard.SetDataObject(data, copy: true);
             SetStatus("Copied.");
         }
         catch (Exception ex)
@@ -704,6 +743,18 @@ public sealed partial class MainWindow
     {
         try
         {
+            // Prefer the "PNG" clipboard format (preserves alpha; written by us,
+            // GIMP, Chrome, etc.), falling back to the alpha-less standard bitmap.
+            var data = Clipboard.GetDataObject();
+            if (data?.GetDataPresent("PNG") == true && data.GetData("PNG") is Stream pngStream)
+            {
+                using var ms = new MemoryStream();
+                pngStream.CopyTo(ms);
+                ms.Position = 0;
+                var decoder = new PngBitmapDecoder(ms, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                if (decoder.Frames.Count > 0)
+                    return ImageCodec.FromBitmapSource(decoder.Frames[0]);
+            }
             if (!Clipboard.ContainsImage()) return null;
             var image = Clipboard.GetImage();
             return image == null ? null : ImageCodec.FromBitmapSource(image);
@@ -863,13 +914,14 @@ public sealed partial class MainWindow
         var layer = _active.Document.ActiveLayer;
         var dialog = new LayerPropertiesDialog(layer) { Owner = this };
         if (dialog.ShowDialog() != true) return;
-        PushHistory(new LayerPropertiesMemento("Layer Properties", layer), "Icon.Properties");
+        var memento = new LayerPropertiesMemento("Layer Properties", layer);
         layer.Name = dialog.LayerName;
-        layer.Opacity = dialog.Opacity;
+        layer.Opacity = dialog.LayerOpacity;
         layer.BlendMode = dialog.Blend;
         layer.Visible = dialog.LayerVisible;
         layer.Locked = dialog.LayerLocked;
         layer.AlphaLocked = dialog.LayerAlphaLocked;
+        PushHistory(memento, "Icon.Properties");
         _active.MarkDirty();
         InvalidateDocument(_active.Document.Bounds);
         RefreshAllPanels();
@@ -1072,14 +1124,17 @@ public sealed class ShortcutsDialog : DialogBase
             ("Ctrl+Z / Ctrl+Y", "Undo / Redo"),
             ("Ctrl+X / Ctrl+C / Ctrl+V", "Cut / Copy / Paste"),
             ("Ctrl+Alt+V", "Paste into new image"),
-            ("Ctrl+A / Ctrl+Shift+A", "Select all / Deselect"),
+            ("Ctrl+A", "Select all"),
+            ("Ctrl+D / Ctrl+Shift+A / Esc", "Deselect (Esc when no operation is active)"),
             ("Ctrl+I", "Invert selection"),
             ("Delete", "Clear selected pixels"),
             ("Ctrl+R / Ctrl+Shift+R", "Resize image / canvas"),
             ("Ctrl+Shift+X", "Crop to selection"),
-            ("+ / - or mouse wheel", "Zoom in / out (cursor centered)"),
+            ("Mouse wheel / Shift+wheel", "Scroll vertically / horizontally"),
+            ("+ / - or Ctrl+wheel", "Zoom in / out (cursor centered)"),
             ("Ctrl+B / Ctrl+Shift+1", "Fit to window / actual size"),
-            ("Space+drag or middle-drag", "Pan the view"),
+            ("Space+drag or middle-drag", "Pan the view (works while scrolling)"),
+            ("F6 / F7 / F8", "Toggle History / Layers / Colors panels"),
             ("Escape / Enter", "Cancel / commit the current operation"),
             ("X", "Swap primary and secondary colors"),
             ("B / E / P", "Paintbrush / Eraser / Pencil"),

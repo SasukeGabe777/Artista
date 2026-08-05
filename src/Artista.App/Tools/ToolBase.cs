@@ -93,6 +93,11 @@ public abstract class ToolBase
 
     public void Attach(IToolContext context) => Context = context;
 
+    /// <summary>True while the tool has an uncommitted operation in flight
+    /// (drag, stroke, floating pixels, text edit). Escape cancels the operation
+    /// when busy; when idle, Escape deselects instead.</summary>
+    public virtual bool IsBusy => false;
+
     public virtual void OnActivated() { }
     public virtual void OnDeactivated() { }
     public virtual void OnPointerDown(ToolPointerEventArgs e) { }

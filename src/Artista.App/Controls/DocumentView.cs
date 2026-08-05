@@ -27,7 +27,6 @@ public sealed class DocumentView : Grid
     public event EventHandler<Point>? CursorMoved;   // document coords
     public event EventHandler? ZoomChanged;
 
-    private bool _spacePanning;
     private bool _middlePanning;
     private Point _panStartView;
     private double _panStartOffsetX, _panStartOffsetY;
@@ -311,16 +310,29 @@ public sealed class DocumentView : Grid
     private void OnCanvasMouseWheel(object sender, MouseWheelEventArgs e)
     {
         var viewPos = e.GetPosition(Canvas);
-        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
         {
-            Canvas.OffsetX -= e.Delta * 0.5;
-            ClampOffsets();
-            AfterViewChanged(false);
+            // Ctrl+wheel zooms, centered on the cursor.
+            SetZoom(e.Delta > 0 ? NextZoomStep(Zoom, true) : NextZoomStep(Zoom, false), viewPos);
         }
         else
         {
-            // Plain wheel and Ctrl+wheel both zoom, centered on the cursor.
-            SetZoom(e.Delta > 0 ? NextZoomStep(Zoom, true) : NextZoomStep(Zoom, false), viewPos);
+            // Plain wheel scrolls vertically, Shift+wheel horizontally
+            // (Paint.NET behavior). Works while middle-button panning too:
+            // shift the pan baseline by the same amount so there is no jump.
+            double delta = e.Delta * 0.75;
+            if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+            {
+                Canvas.OffsetX += delta;
+                _panStartOffsetX += delta;
+            }
+            else
+            {
+                Canvas.OffsetY += delta;
+                _panStartOffsetY += delta;
+            }
+            ClampOffsets();
+            AfterViewChanged(false);
         }
         e.Handled = true;
     }

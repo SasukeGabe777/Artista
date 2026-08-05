@@ -10,7 +10,12 @@
     <RootNamespace>Artista.App</RootNamespace>
     <AssemblyName>Artista</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\Artista.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\Artista.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Artista.Core\Artista.Core.csproj" />

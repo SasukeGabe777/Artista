@@ -21,6 +21,8 @@ public abstract class StrokeToolBase : ToolBase
     private double _lastX, _lastY;
     private bool _active;
 
+    public override bool IsBusy => _active;
+
     protected virtual double DabRadius => Context.Environment.BrushWidth / 2;
     protected virtual double DabHardness => Context.Environment.Hardness;
     protected virtual bool DabAntialias => Context.Environment.Antialias;

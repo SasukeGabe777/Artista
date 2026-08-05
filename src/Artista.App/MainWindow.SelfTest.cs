@@ -319,6 +319,84 @@ public sealed partial class MainWindow
         // 21. Dirty-close confirmation path is exercised interactively; verify flag.
         Check(_active.IsDirty, "document marked dirty after edits");
 
+        // 21b. Copy/paste preserves transparency (PNG clipboard format).
+        try
+        {
+            CreateDocument(60, 60, "Transparent");
+            await PumpAsync();
+            var cpLayer = _active!.Document.ActiveLayer;
+            cpLayer.Surface.FillRect(new Core.Imaging.RectInt(0, 0, 30, 60), Core.Imaging.ColorBgra.Pack(0, 0, 255, 255));
+            _active.InvalidateComposite(_active.Document.Bounds);
+            SelectAll();
+            EditCut();
+            await PumpAsync();
+            Check(Core.Imaging.ColorBgra.A(cpLayer.Surface[10, 10]) == 0, "Ctrl+X cleared the selected pixels");
+            EditPaste();
+            await PumpAsync();
+            var pasted = _active.Document.ActiveLayer;
+            Check(pasted.Name.Contains("Pasted"), "paste created a new layer");
+            Check(Core.Imaging.ColorBgra.A(pasted.Surface[10, 10]) == 255 &&
+                  Core.Imaging.ColorBgra.R(pasted.Surface[10, 10]) == 255, "pasted pixels kept their color");
+            Check(Core.Imaging.ColorBgra.A(pasted.Surface[45, 10]) == 0,
+                "pasted transparency preserved (no black background)");
+            _activeTool?.OnCancel(); // release the move-tool float from paste
+            (_activeTool as MoveSelectedPixelsTool)?.OnCancel();
+            CloseWorkspace(_active);
+            await PumpAsync();
+        }
+        catch (Exception ex)
+        {
+            Fail($"clipboard round trip threw: {ex.Message}");
+        }
+
+        // 21c. Click-to-deselect and Escape cancel/deselect behavior.
+        var wand2 = Tool<MagicWandTool>();
+        wand2.OnPointerDown(Pt(10, 10));
+        await PumpAsync();
+        Check(!_active!.Document.Selection.IsEmpty, "wand selection exists before click-deselect");
+        var rectSel2 = Tool<RectangleSelectTool>();
+        rectSel2.OnPointerDown(Pt(50, 50));
+        rectSel2.OnPointerUp(Pt(50, 50));
+        await PumpAsync();
+        Check(_active.Document.Selection.IsEmpty, "plain click with a selection tool deselects");
+
+        SelectAll();
+        var lasso2 = Tool<LassoSelectTool>();
+        lasso2.OnPointerDown(Pt(50, 50));
+        lasso2.OnPointerUp(Pt(50, 50));
+        Check(_active.Document.Selection.IsEmpty, "plain click with lasso select deselects");
+
+        SelectAll();
+        var escapeBrush = Tool<PaintbrushTool>();
+        uint pixelBeforeCancelledStroke = _active.Document.ActiveLayer.Surface[5, 5];
+        escapeBrush.OnPointerDown(Pt(5, 5));
+        Check(escapeBrush.IsBusy, "stroke reports an operation in progress");
+        CancelActiveOperationOrDeselect();
+        Check(!escapeBrush.IsBusy && _active.Document.ActiveLayer.Surface[5, 5] == pixelBeforeCancelledStroke,
+            "Escape cancels an active stroke and restores pixels");
+        Check(!_active.Document.Selection.IsEmpty, "canceling an active tool preserves the selection");
+        CancelActiveOperationOrDeselect();
+        Check(_active.Document.Selection.IsEmpty, "Escape deselects when the active tool is idle");
+
+        // 21d. Floating panels exist by default and can dock/undock/toggle.
+        var historySite = _panelSites.First(s => s.Name == "history");
+        Check(!historySite.State.Docked, "history panel is floating by default");
+        Check(historySite.Window is { IsVisible: true }, "history floating window is shown");
+        if (historySite.Window != null)
+            SnapshotVisual(historySite.Window, "13-floating-history");
+        DockSite(historySite);
+        await PumpAsync();
+        Check(historySite.State.Docked && historySite.DockHost != null, "history panel docked");
+        FloatSite(historySite);
+        await PumpAsync();
+        Check(!historySite.State.Docked && historySite.Window is { IsVisible: true }, "history panel floated again");
+        TogglePanel("history");
+        await PumpAsync();
+        Check(historySite.Window is { IsVisible: false }, "F6 toggle hides the history panel");
+        TogglePanel("history");
+        await PumpAsync();
+        Check(historySite.Window is { IsVisible: true }, "F6 toggle shows the history panel again");
+
         // 22. The File menu opens, lays out items, and renders themed.
         var fileMenu = (System.Windows.Controls.MenuItem)_menuBar.Items[0];
         fileMenu.IsSubmenuOpen = true;

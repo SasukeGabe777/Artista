@@ -49,6 +49,7 @@ public sealed class PaintBucketTool : ToolBase
 public sealed class GradientTool : ToolBase
 {
     public override string Name => "Gradient";
+    public override bool IsBusy => _dragging;
     public override string IconKey => "Icon.Gradient";
     public override ToolSettingKind[] SettingsBar => new[]
     {

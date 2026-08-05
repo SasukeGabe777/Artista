@@ -21,7 +21,7 @@ Also available in-app: **Help → Keyboard Shortcuts** (or **F1**).
 | Ctrl+Alt+V | Paste into new image |
 | Delete | Clear selected pixels |
 | Ctrl+A | Select all |
-| Ctrl+Shift+A | Deselect |
+| Ctrl+D / Ctrl+Shift+A / Esc | Deselect (Esc when nothing is in progress; a plain click with a selection tool also deselects) |
 | Ctrl+I | Invert selection |
 
 ## Image & layers
@@ -39,11 +39,14 @@ Also available in-app: **Help → Keyboard Shortcuts** (or **F1**).
 ## View
 | Shortcut | Action |
 |---|---|
+| Mouse wheel | Scroll vertically |
+| Shift+wheel | Scroll horizontally |
+| Ctrl+wheel | Zoom (cursor-centered) |
 | + / − | Zoom in / out |
-| Mouse wheel | Zoom (cursor-centered); Shift+wheel scrolls horizontally |
 | Ctrl+B | Fit to window |
 | Ctrl+Shift+1 | Actual size (100%) |
-| Space+drag / middle-drag | Pan |
+| Space+drag / middle-drag | Pan (wheel-scrolling works at the same time) |
+| F6 / F7 / F8 | Toggle History / Layers / Colors panels |
 
 ## Tools (single keys)
 | Key | Tool |

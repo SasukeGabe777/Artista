@@ -11,6 +11,8 @@ namespace Artista.App.Tools;
 public abstract class SelectionToolBase : ToolBase
 {
     protected bool Dragging;
+
+    public override bool IsBusy => Dragging;
     protected Point Start;
     protected Point Current;
     private byte[]? _maskBefore;
@@ -54,8 +56,25 @@ public abstract class SelectionToolBase : ToolBase
         if (!Dragging || Context.Workspace == null) return;
         Dragging = false;
         var doc = Context.Workspace.Document;
-        var mask = BuildMask(doc.Width, doc.Height);
         var mode = EffectiveCombineMode(e.Modifiers);
+
+        // A plain click (no meaningful drag) in Replace mode deselects,
+        // like Paint.NET.
+        if (Math.Abs(Current.X - Start.X) < 2 && Math.Abs(Current.Y - Start.Y) < 2 &&
+            mode == SelectionCombineMode.Replace && e.Modifiers == ModifierKeys.None)
+        {
+            if (!doc.Selection.IsEmpty)
+            {
+                doc.Selection.Clear();
+                Context.PushHistory(new SelectionMemento("Deselect", _maskBefore!), "Icon.Deselect");
+                Context.NotifySelectionChanged();
+            }
+            _maskBefore = null;
+            Context.InvalidateOverlay();
+            return;
+        }
+
+        var mask = BuildMask(doc.Width, doc.Height);
         doc.Selection.Combine(mask, mode);
         if (Context.Environment.Feather > 0)
             doc.Selection.Feather((int)Context.Environment.Feather);
@@ -113,6 +132,7 @@ public sealed class EllipseSelectTool : SelectionToolBase
 public sealed class LassoSelectTool : ToolBase
 {
     public override string Name => "Lasso Select";
+    public override bool IsBusy => _dragging;
     public override string IconKey => "Icon.Lasso";
     public override ToolSettingKind[] SettingsBar => new[] { ToolSettingKind.CombineMode, ToolSettingKind.Feather };
     public override string StatusHint => "Click and drag to draw a freeform selection.";
@@ -146,18 +166,43 @@ public sealed class LassoSelectTool : ToolBase
         if (!_dragging || Context.Workspace == null) return;
         _dragging = false;
         var doc = Context.Workspace.Document;
+        SelectionCombineMode mode = Context.Environment.CombineMode;
+        if ((e.Modifiers & ModifierKeys.Control) != 0) mode = SelectionCombineMode.Add;
+        else if ((e.Modifiers & ModifierKeys.Alt) != 0) mode = SelectionCombineMode.Subtract;
+
+        var start = _points[0];
+        bool plainClick = Math.Abs(e.X - start.X) < 2 && Math.Abs(e.Y - start.Y) < 2;
+        if (plainClick && mode == SelectionCombineMode.Replace && e.Modifiers == ModifierKeys.None)
+        {
+            if (!doc.Selection.IsEmpty)
+            {
+                doc.Selection.Clear();
+                Context.PushHistory(new SelectionMemento("Deselect", _maskBefore!), "Icon.Deselect");
+                Context.NotifySelectionChanged();
+            }
+            _points.Clear();
+            _maskBefore = null;
+            Context.InvalidateOverlay();
+            return;
+        }
+
         if (_points.Count >= 3)
         {
             var mask = SelectionRasterizer.RasterizePolygon(doc.Width, doc.Height, _points);
-            SelectionCombineMode mode = Context.Environment.CombineMode;
-            if ((e.Modifiers & ModifierKeys.Control) != 0) mode = SelectionCombineMode.Add;
-            else if ((e.Modifiers & ModifierKeys.Alt) != 0) mode = SelectionCombineMode.Subtract;
             doc.Selection.Combine(mask, mode);
             if (Context.Environment.Feather > 0)
                 doc.Selection.Feather((int)Context.Environment.Feather);
             Context.PushHistory(new SelectionMemento(Name, _maskBefore!), IconKey);
             Context.NotifySelectionChanged();
         }
+        _points.Clear();
+        _maskBefore = null;
+        Context.InvalidateOverlay();
+    }
+
+    public override void OnCancel()
+    {
+        _dragging = false;
         _points.Clear();
         _maskBefore = null;
         Context.InvalidateOverlay();
@@ -225,6 +270,8 @@ public sealed class MoveSelectionTool : ToolBase
     private byte[]? _maskBefore;
     private bool _moved;
 
+    public override bool IsBusy => _dragging;
+
     public override void OnPointerDown(ToolPointerEventArgs e)
     {
         var ws = Context.Workspace;
@@ -258,6 +305,19 @@ public sealed class MoveSelectionTool : ToolBase
         }
         _maskBefore = null;
     }
+
+    public override void OnCancel()
+    {
+        if (_dragging && _maskBefore != null && Context.Workspace != null)
+        {
+            Context.Workspace.Document.Selection.RestoreMask(_maskBefore);
+            Context.NotifySelectionChanged();
+        }
+        _dragging = false;
+        _moved = false;
+        _maskBefore = null;
+        Context.InvalidateOverlay();
+    }
 }
 
 /// <summary>
@@ -282,6 +342,8 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     private int _dragStartOffsetX, _dragStartOffsetY;
 
     public bool IsFloating => _floating != null;
+
+    public override bool IsBusy => IsFloating;
 
     public override void OnPointerDown(ToolPointerEventArgs e)
     {
