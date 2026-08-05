@@ -25,6 +25,9 @@ public sealed class FloatingPanelWindow : Window
     /// <summary>Raised when the user drops the window near the dock edge or clicks the dock button.</summary>
     public event Action<PanelDockEdge>? DockRequested;
 
+    /// <summary>Shows or hides the owner's visual docking targets during a window drag.</summary>
+    public event Action<bool>? DockDragStateChanged;
+
     /// <summary>Raised when the user closes (hides) the panel.</summary>
     public event EventHandler? HideRequested;
 
@@ -62,7 +65,7 @@ public sealed class FloatingPanelWindow : Window
 
         var closeButton = HeaderButton("✕", "Hide panel (reopen from the View menu)");
         closeButton.Click += (_, _) => HideRequested?.Invoke(this, EventArgs.Empty);
-        var dockButton = HeaderButton("⇥", "Dock into the side panel (drag near the window edge also docks)");
+        var dockButton = HeaderButton("⇥", "Dock left, right, or above the canvas (drag toward a highlighted target)");
         dockButton.Click += (_, _) => DockRequested?.Invoke(NearestDockEdge());
         DockPanel.SetDock(closeButton, Dock.Right);
         DockPanel.SetDock(dockButton, Dock.Right);
@@ -77,7 +80,9 @@ public sealed class FloatingPanelWindow : Window
                 DockRequested?.Invoke(NearestDockEdge());
                 return;
             }
+            DockDragStateChanged?.Invoke(true);
             try { DragMove(); } catch { /* only valid while button down */ }
+            finally { DockDragStateChanged?.Invoke(false); }
             CheckDockProximity();
         };
 
@@ -131,7 +136,7 @@ public sealed class FloatingPanelWindow : Window
             candidates.Add((Math.Abs(Top - ownerTop), PanelDockEdge.Top));
         if (candidates.Count == 0) return;
         var nearest = candidates.OrderBy(c => c.Distance).FirstOrDefault();
-        if (nearest.Distance < 45)
+        if (nearest.Distance < 70)
             DockRequested?.Invoke(nearest.Edge);
     }
 

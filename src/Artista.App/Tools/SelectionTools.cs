@@ -336,6 +336,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     private RectInt _operationStartRect; // original position, retained for history
     private int _offsetX, _offsetY;      // current offset from source
     private Surface? _layerSnapshot;     // layer before lift (for history/cancel)
+    private Surface? _externalBaseSnapshot; // selected layer before pasted pixels
     private byte[]? _selectionSnapshot;
     private int _layerId = -1;
     private bool _dragging;
@@ -423,7 +424,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
 
     /// <summary>Starts an immediately movable paste while retaining source
     /// pixels that extend outside the fixed document canvas.</summary>
-    public void BeginPaste(Surface source, Core.Layers.Layer layer, int originX, int originY)
+    public void BeginPaste(Surface source, Core.Layers.Layer layer, Surface layerBeforePaste, int originX, int originY)
     {
         var ws = Context.Workspace;
         if (ws == null) return;
@@ -431,6 +432,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
 
         _layerId = layer.Id;
         _layerSnapshot = layer.Surface.Clone();
+        _externalBaseSnapshot = layerBeforePaste;
         _floatSourceRect = new RectInt(originX, originY, source.Width, source.Height);
         _operationStartRect = _floatSourceRect;
         _offsetX = _offsetY = 0;
@@ -470,7 +472,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     private ResizeCorner HitResizeHandle(double x, double y)
     {
         var r = FloatRect();
-        double radius = 7 / Math.Max(0.05, Context.ZoomFactor);
+        double radius = 6 / Math.Max(0.05, Context.ZoomFactor);
         var handles = new[]
         {
             (DistanceSquared(x, y, r.Left, r.Top), ResizeCorner.TopLeft),
@@ -562,6 +564,14 @@ public sealed class MoveSelectedPixelsTool : ToolBase
 
     private void RestoreClearedRegion(Core.Layers.Layer layer, RectInt rect)
     {
+        if (_externalFloat && _externalBaseSnapshot != null)
+        {
+            var externalRect = rect.Intersect(layer.Surface.Bounds);
+            for (int y = externalRect.Top; y < externalRect.Bottom; y++)
+                _externalBaseSnapshot.GetRowSpan(y, externalRect.Left, externalRect.Width)
+                    .CopyTo(layer.Surface.GetRowSpan(y, externalRect.Left, externalRect.Width));
+            return;
+        }
         // The "cleared" state = snapshot with selection coverage removed.
         var r = rect.Intersect(layer.Surface.Bounds);
         for (int y = r.Top; y < r.Bottom; y++)
@@ -660,6 +670,15 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     public override void OnCommit() => Commit();
     public override void OnDeactivated() => Commit();
 
+    public void CommitAndDeselect()
+    {
+        Commit();
+        var ws = Context.Workspace;
+        if (ws == null || ws.Document.Selection.IsEmpty) return;
+        ws.Document.Selection.Clear();
+        Context.NotifySelectionChanged();
+    }
+
     public void Commit()
     {
         var ws = Context.Workspace;
@@ -703,6 +722,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     {
         _floating = null;
         _layerSnapshot = null;
+        _externalBaseSnapshot = null;
         _selectionSnapshot = null;
         _layerId = -1;
         _offsetX = _offsetY = 0;

@@ -6,10 +6,10 @@ A personal, Paint.NET-style raster image editor for Windows, built from scratch 
 
 ## Feature set
 
-- **Documents**: new (transparent / white / color background), open, save, save-as, export, multiple tabbed documents, unsaved-change indicators and close confirmation, recent files, foreground-safe drag-and-drop Open/Add-layer choice, active-layer clipboard cut/copy/paste and paste-into-new-image, oversized-paste Expand/Keep-canvas choice, resize image, resize canvas (anchored), rotate 90/180, flip, crop to selection, image properties, configurable defaults.
+- **Documents**: new (transparent / white / color background), open, save, save-as, export, multiple tabbed documents, unsaved-change indicators and close confirmation, recent files, foreground-safe drag-and-drop Open/Add-layer choice, active-layer clipboard cut/copy/paste and paste-into-new-image, paste into the selected target layer with floating resize handles, oversized-paste Expand/Keep-canvas choice, resize image, resize canvas (anchored), rotate 90/180, flip, crop to selection, image properties, configurable defaults.
 - **Formats**: PNG, JPEG, BMP, GIF, TIFF (WebP decodes when the Windows codec is installed; WIC cannot encode WebP). Native layered project format **`.artz`** (documented in `docs/PROJECT_FORMAT.md`).
 - **Canvas**: checkerboard transparency, cursor-centered wheel zoom (3%–6400%), fit-to-window / actual size, smooth panning (Space+drag, middle-drag, Pan tool), scrollbars, pixel grid at high zoom, optional rulers, animated marching-ants selection outline, live tool previews.
-- **Layers**: add / delete / duplicate / rename / reorder (buttons + drag), Delete-key removal from the Layers panel, merge down, flatten, visibility, opacity, lock, alpha-lock, thumbnails, blend modes (Normal, Multiply, Screen, Overlay, Darken, Lighten, Difference, Additive). Colors, History, and Layers can float or dock left, right, or above the canvas.
+- **Layers**: add / delete / duplicate / rename / reorder (buttons + drag), Delete-key removal from the Layers panel, merge down, flatten, visibility, opacity, lock, alpha-lock, thumbnails, blend modes (Normal, Multiply, Screen, Overlay, Darken, Lighten, Difference, Additive). Colors, History, and Layers can float or dock left, right, or above the canvas; labeled targets appear while dragging.
 - **History**: unlimited undo/redo with named entries, history panel with click-to-jump, one entry per stroke / effect, region-delta storage with a configurable memory budget (default 512 MB).
 - **Selections**: rectangle, ellipse, lasso, magic wand (tolerance, contiguous/global), select all / deselect / invert, add/subtract/intersect combine modes (Ctrl/Alt while dragging), feathering, move selected pixels, resize pasted pixels from four corner handles (Shift preserves aspect ratio), move selection outline; all tools and effects respect the selection mask with antialiased edges.
 - **Tools** (24): Rectangle/Ellipse/Lasso Select, Magic Wand, Move Selected Pixels, Move Selection, Zoom, Pan, Paintbrush, Pencil, Eraser, Paint Bucket, Gradient (linear/radial), Color Picker, Clone Stamp, Recolor, **Color Remover**, Text, Line, Curve, Rectangle, Rounded Rectangle, Ellipse, Freeform Shape.
@@ -43,7 +43,7 @@ dotnet run --project src\Artista.App -c Release
 **Compiled executable:** `src\Artista.App\bin\Release\net10.0-windows\Artista.exe`
 (Debug builds land in `bin\Debug\net10.0-windows\Artista.exe`.)
 
-There is also an automated UI smoke test that drives the real window through 96 checks (documents, tools, effects, undo, save/reopen, themes, menus, dialogs, startup chrome, exact-corner canvas panning, layer targeting, paste resizing, drag/drop activation, active-layer clipboard behavior, selection cancellation, and multi-edge panels):
+There is also an automated UI smoke test that drives the real window through 103 checks (documents, tools, effects, undo, save/reopen, themes, menus, dialogs, startup chrome, exact-corner canvas panning, layer-targeted paste, paste resizing, drag/drop activation, active-layer clipboard behavior, selection cancellation, and visible multi-edge docking):
 
 ```cmd
 src\Artista.App\bin\Release\net10.0-windows\Artista.exe --uitest %TEMP%\artista-uitest

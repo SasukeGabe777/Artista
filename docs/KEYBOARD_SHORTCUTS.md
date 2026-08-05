@@ -17,7 +17,7 @@ Also available in-app: **Help → Keyboard Shortcuts** (or **F1**).
 |---|---|
 | Ctrl+Z | Undo |
 | Ctrl+Y / Ctrl+Shift+Z | Redo |
-| Ctrl+X / Ctrl+C / Ctrl+V | Cut / Copy / Paste (paste creates a new layer) |
+| Ctrl+X / Ctrl+C / Ctrl+V | Cut / Copy / Paste (paste floats inside the selected layer) |
 | Ctrl+Alt+V | Paste into new image |
 | Delete | Clear selected pixels; when the Layers list has focus, delete that layer |
 | Ctrl+A | Select all |
@@ -69,7 +69,7 @@ Also available in-app: **Help → Keyboard Shortcuts** (or **F1**).
 | Shortcut | Action |
 |---|---|
 | Escape | Cancel the active operation (stroke, shape, floating move, text) |
-| Enter | Commit the active operation (floating move, curve, text via Escape) |
+| Enter | Commit the active operation; Move Selected Pixels also deselects |
 | X | Swap primary/secondary colors |
 | Ctrl (drag with selection tool) | Add to selection |
 | Alt (drag with selection tool) | Subtract from selection |

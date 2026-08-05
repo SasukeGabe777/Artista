@@ -28,6 +28,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
     private readonly DocumentView _documentView = new();
     private readonly ListBox _tabStrip = new();
     private readonly UniformGrid _toolPalette = new() { Columns = 2 };
+    private readonly Grid _dockGuideOverlay = new() { IsHitTestVisible = false, Visibility = Visibility.Collapsed };
     private readonly StackPanel _settingsBar = new() { Orientation = Orientation.Horizontal };
     private readonly TextBlock _settingsToolName = new() { VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold, Margin = new Thickness(6, 0, 10, 0) };
     private ColorsPanel _colorsPanel = null!;
@@ -172,7 +173,52 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         center.Children.Add(_documentView);
         root.Children.Add(center);
 
-        return root;
+        BuildDockGuideOverlay();
+        var shell = new Grid();
+        shell.Children.Add(root);
+        shell.Children.Add(_dockGuideOverlay);
+        return shell;
+    }
+
+    private void BuildDockGuideOverlay()
+    {
+        Border Guide(string label, HorizontalAlignment horizontal, VerticalAlignment vertical, Thickness margin)
+        {
+            var border = new Border
+            {
+                Width = vertical == VerticalAlignment.Top ? 250 : 110,
+                Height = vertical == VerticalAlignment.Top ? 76 : 180,
+                HorizontalAlignment = horizontal,
+                VerticalAlignment = vertical,
+                Margin = margin,
+                CornerRadius = new CornerRadius(8),
+                BorderThickness = new Thickness(3),
+                BorderBrush = Brushes.White,
+                Background = new SolidColorBrush(Color.FromArgb(220, 20, 115, 220)),
+                Child = new TextBlock
+                {
+                    Text = $"DOCK\n{label}",
+                    Foreground = Brushes.White,
+                    FontSize = 17,
+                    FontWeight = FontWeights.Bold,
+                    TextAlignment = TextAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                },
+            };
+            return border;
+        }
+
+        _dockGuideOverlay.Children.Add(Guide("LEFT", HorizontalAlignment.Left, VerticalAlignment.Center, new Thickness(72, 0, 0, 0)));
+        _dockGuideOverlay.Children.Add(Guide("TOP", HorizontalAlignment.Center, VerticalAlignment.Top, new Thickness(0, 76, 0, 0)));
+        _dockGuideOverlay.Children.Add(Guide("RIGHT", HorizontalAlignment.Right, VerticalAlignment.Center, new Thickness(0, 0, 18, 0)));
+    }
+
+    private void ShowDockGuides(bool visible)
+    {
+        _dockGuideOverlay.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        _dockGuideOverlay.UpdateLayout();
+        if (visible)
+            Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Render);
     }
 
     private Border BuildSettingsBar()
@@ -367,6 +413,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         {
             site.Window = new FloatingPanelWindow(site.Title, this);
             site.Window.DockRequested += edge => DockSite(site, edge);
+            site.Window.DockDragStateChanged += ShowDockGuides;
             site.Window.HideRequested += (_, _) => SetPanelVisible(site, false);
             ApplyShortcuts(site.Window.InputBindings);
         }
@@ -849,7 +896,10 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
             }
             if (e.Key == Key.Enter && _activeTool is not TextTool)
             {
-                _activeTool.OnCommit();
+                if (_activeTool is MoveSelectedPixelsTool movePixels)
+                    movePixels.CommitAndDeselect();
+                else
+                    _activeTool.OnCommit();
                 InvalidateOverlay();
                 e.Handled = true;
                 return;

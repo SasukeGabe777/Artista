@@ -367,12 +367,41 @@ public sealed partial class MainWindow
             uint copyRed = Core.Imaging.ColorBgra.Pack(0, 0, 255, 255);
             copyLayer.Surface.FillRect(new RectInt(7, 9, 11, 6), copyRed);
             LayerAdd();
-            _active.Document.ActiveLayer.Surface.Clear(Core.Imaging.ColorBgra.Pack(255, 0, 0, 255));
+            var pasteTarget = _active.Document.ActiveLayer;
+            uint pasteBlue = Core.Imaging.ColorBgra.Pack(255, 0, 0, 255);
+            pasteTarget.Surface.Clear(pasteBlue);
             _layersPanel.SelectLayer(copyLayer.Id);
             Check(TryCopyToClipboard(), "Ctrl+C copied the selected active layer");
             var croppedCopy = GetClipboardSurface();
             Check(croppedCopy is { Width: 11, Height: 6 } && croppedCopy[0, 0] == copyRed,
                 "Ctrl+C crops active-layer content instead of selecting the entire canvas");
+            _layersPanel.SelectLayer(pasteTarget.Id);
+            int copyPasteLayerCount = _active.Document.Layers.Count;
+            EditPaste();
+            var layerPasteMove = (MoveSelectedPixelsTool)_activeTool!;
+            Check(_active.Document.Layers.Count == copyPasteLayerCount &&
+                  _active.Document.ActiveLayer.Id == pasteTarget.Id,
+                "pasting copied layer pixels stays inside the selected target layer");
+            Check(layerPasteMove.IsFloating && layerPasteMove.FloatingBounds is { Width: 11, Height: 6 },
+                "pixels pasted into an existing layer receive resize handles");
+            var initialLayerPaste = layerPasteMove.FloatingBounds;
+            DragTool(layerPasteMove,
+                initialLayerPaste.Left + initialLayerPaste.Width / 2.0,
+                initialLayerPaste.Top + initialLayerPaste.Height / 2.0,
+                initialLayerPaste.Left + initialLayerPaste.Width / 2.0 + 15,
+                initialLayerPaste.Top + initialLayerPaste.Height / 2.0);
+            Check(pasteTarget.Surface[initialLayerPaste.Left, initialLayerPaste.Top] == pasteBlue,
+                "moving a paste restores pixels that were already in the target layer");
+            layerPasteMove.CommitAndDeselect();
+            Check(_active.Document.Selection.IsEmpty,
+                "Enter-style Move Selected Pixels commit deselects the floating pixels");
+            Undo();
+            Check(pasteTarget.Surface[initialLayerPaste.Left, initialLayerPaste.Top] == copyRed,
+                "undo restores the paste to its initial position inside the target layer");
+            Undo();
+            Check(pasteTarget.Surface[initialLayerPaste.Left, initialLayerPaste.Top] == pasteBlue &&
+                  _active.Document.Layers.Count == copyPasteLayerCount,
+                "undo paste restores target pixels without changing the layer stack");
             CloseWorkspace(_active);
             await PumpAsync();
         }
@@ -396,7 +425,8 @@ public sealed partial class MainWindow
             EditPaste();
             await PumpAsync();
             var pasted = _active.Document.ActiveLayer;
-            Check(pasted.Name.Contains("Pasted"), "paste created a new layer");
+            Check(ReferenceEquals(pasted, cpLayer) && _active.Document.Layers.Count == 1,
+                "paste writes into the selected layer instead of creating a Pasted layer");
             Check(Core.Imaging.ColorBgra.A(pasted.Surface[10, 10]) == 255 &&
                   Core.Imaging.ColorBgra.R(pasted.Surface[10, 10]) == 255, "pasted pixels kept their color");
             Check(Core.Imaging.ColorBgra.A(pasted.Surface[45, 10]) == 0,
@@ -532,6 +562,12 @@ public sealed partial class MainWindow
 
         // 21g. Floating panels can dock on every supported canvas edge.
         var historySite = _panelSites.First(s => s.Name == "history");
+        ShowDockGuides(true);
+        await PumpAsync();
+        Check(_dockGuideOverlay.IsVisible && _dockGuideOverlay.Children.Count == 3,
+            "panel dragging shows left, top, and right docking targets");
+        Snapshot("17-panel-dock-targets");
+        ShowDockGuides(false);
         FloatSite(historySite);
         await PumpAsync();
         Check(!historySite.State.Docked, "history panel can be floated");

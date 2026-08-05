@@ -787,7 +787,14 @@ public sealed partial class MainWindow
         if (_active == null) return;
         _activeTool?.OnCommit();
         var doc = _active.Document;
-        HistoryMemento pasteMemento;
+        var targetLayer = doc.ActiveLayer;
+        if (targetLayer.Locked || !targetLayer.Visible)
+        {
+            SetStatus("The selected layer is locked or hidden.");
+            return;
+        }
+        HistoryMemento? pasteMemento = null;
+        byte[] selectionBefore = doc.Selection.SnapshotMask();
 
         if (expandCanvas)
         {
@@ -796,37 +803,30 @@ public sealed partial class MainWindow
             int newHeight = Math.Max(doc.Height, surface.Height);
             DocumentTransforms.ResizeCanvas(doc, newWidth, newHeight, AnchorPosition.TopLeft);
         }
-        else
-        {
-            var selectionBefore = doc.Selection.SnapshotMask();
-            // The layer memento is constructed after the layer is created below.
-            pasteMemento = new SelectionMemento("Paste", selectionBefore);
-        }
 
         int ox = (doc.Width - surface.Width) / 2;
         int oy = (doc.Height - surface.Height) / 2;
-        var layer = new Layer(doc.Width, doc.Height, "Pasted layer");
-        layer.Surface.DrawSurfaceOver(surface, ox, oy);
-        doc.Layers.Add(layer);
-        doc.ActiveLayerIndex = doc.Layers.Count - 1;
+        var pasteRect = new RectInt(ox, oy, surface.Width, surface.Height).Intersect(doc.Bounds);
+        var layerBeforePaste = targetLayer.Surface.Clone();
 
         if (!expandCanvas)
         {
             pasteMemento = new CompositeMemento("Paste", new HistoryMemento[]
             {
-                new LayerAddedMemento("Paste", layer),
-                pasteMemento,
+                new SurfaceRegionMemento("Paste", targetLayer, pasteRect),
+                new SelectionMemento("Paste", selectionBefore),
             });
         }
 
-        _active.NotifyStructureChanged();
+        targetLayer.Surface.DrawSurfaceOver(surface, ox, oy);
+        _active.InvalidateComposite(pasteRect);
         var moveTool = _tools.OfType<MoveSelectedPixelsTool>().First();
         ActivateTool(moveTool);
-        moveTool.BeginPaste(surface, layer, ox, oy);
-        PushHistory(pasteMemento, "Icon.Paste");
+        moveTool.BeginPaste(surface, targetLayer, layerBeforePaste, ox, oy);
+        PushHistory(pasteMemento ?? throw new InvalidOperationException("Paste history was not initialized."), "Icon.Paste");
         SetStatus(expandCanvas
-            ? "Pasted as a new layer and expanded the canvas. Drag a corner to resize; hold Shift to preserve aspect ratio."
-            : "Pasted as a movable layer. Drag a corner to resize (Shift preserves aspect ratio); Enter finishes and Escape resets.");
+            ? "Pasted into the selected layer and expanded the canvas. Drag a corner to resize; hold Shift to preserve aspect ratio."
+            : "Pasted into the selected layer. Drag a corner to resize (Shift preserves aspect ratio); Enter finishes and deselects.");
     }
 
     private void EditPasteIntoNewImage()
