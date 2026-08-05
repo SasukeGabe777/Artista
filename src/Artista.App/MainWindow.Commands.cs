@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Artista.App.Dialogs;
 using Artista.App.Models;
 using Artista.App.Tools;
@@ -412,7 +413,16 @@ public sealed partial class MainWindow
         if (files.Length == 0) return;
         e.Handled = true;
 
-        var dialog = new FileDropDialog(files.Length) { Owner = this };
+        // Explorer may reclaim foreground activation until its OLE drop callback
+        // returns. Defer the modal window so it is owned and activated afterward.
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,
+            new Action(() => ShowFileDropDialog(files)));
+    }
+
+    private void ShowFileDropDialog(string[] files)
+    {
+        Activate();
+        var dialog = new FileDropDialog(files.Length) { Owner = this, Topmost = true };
         if (dialog.ShowDialog() != true) return;
         if (dialog.Choice == FileDropChoice.Open)
         {
@@ -646,12 +656,17 @@ public sealed partial class MainWindow
         if (_active == null) return false;
         _activeTool?.OnCommit();
         var doc = _active.Document;
-        var bounds = doc.Selection.EffectiveBounds;
-        var flat = doc.Flatten();
+        var source = doc.ActiveLayer.Surface;
+        var bounds = doc.Selection.IsEmpty ? FindContentBounds(source) : doc.Selection.Bounds;
+        if (bounds.IsEmpty)
+        {
+            SetStatus("The active layer has no pixels to copy.");
+            return false;
+        }
         var region = new Surface(bounds.Width, bounds.Height);
         for (int y = 0; y < bounds.Height; y++)
         {
-            var src = flat.GetRowSpan(bounds.Top + y, bounds.Left, bounds.Width);
+            var src = source.GetRowSpan(bounds.Top + y, bounds.Left, bounds.Width);
             var dst = region.GetRow(y);
             src.CopyTo(dst);
             if (!doc.Selection.IsEmpty)
@@ -669,10 +684,10 @@ public sealed partial class MainWindow
             // Standard bitmap for other apps + "PNG" format so transparency
             // survives a round trip (plain DIBs have no alpha channel).
             var data = new DataObject();
-            var source = ImageCodec.ToBitmapSource(region);
-            data.SetImage(source);
+            var bitmapSource = ImageCodec.ToBitmapSource(region);
+            data.SetImage(bitmapSource);
             var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(source));
+            encoder.Frames.Add(BitmapFrame.Create(bitmapSource));
             var png = new MemoryStream();
             encoder.Save(png);
             png.Position = 0;
@@ -686,6 +701,24 @@ public sealed partial class MainWindow
             SetStatus($"Copy failed: {ex.Message}");
             return false;
         }
+    }
+
+    private static RectInt FindContentBounds(Surface surface)
+    {
+        int left = surface.Width, top = surface.Height, right = -1, bottom = -1;
+        for (int y = 0; y < surface.Height; y++)
+        {
+            var row = surface.GetRow(y);
+            for (int x = 0; x < surface.Width; x++)
+            {
+                if (ColorBgra.A(row[x]) == 0) continue;
+                left = Math.Min(left, x);
+                top = Math.Min(top, y);
+                right = Math.Max(right, x);
+                bottom = Math.Max(bottom, y);
+            }
+        }
+        return right < left ? RectInt.Empty : RectInt.FromLTRB(left, top, right + 1, bottom + 1);
     }
 
     private void EditCut()
@@ -792,8 +825,8 @@ public sealed partial class MainWindow
         moveTool.BeginPaste(surface, layer, ox, oy);
         PushHistory(pasteMemento, "Icon.Paste");
         SetStatus(expandCanvas
-            ? "Pasted as a new layer and expanded the canvas."
-            : "Pasted as a movable layer. Press Enter to finish or Escape to reset its position.");
+            ? "Pasted as a new layer and expanded the canvas. Drag a corner to resize; hold Shift to preserve aspect ratio."
+            : "Pasted as a movable layer. Drag a corner to resize (Shift preserves aspect ratio); Enter finishes and Escape resets.");
     }
 
     private void EditPasteIntoNewImage()

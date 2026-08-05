@@ -48,6 +48,8 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         Width = 1440;
         Height = 900;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        WindowStyle = WindowStyle.SingleBorderWindow;
+        ResizeMode = ResizeMode.CanResize;
         SetResourceReference(BackgroundProperty, "WindowBackgroundBrush");
         SetResourceReference(ForegroundProperty, "ForegroundBrush");
         FontFamily = new FontFamily("Segoe UI");
@@ -85,9 +87,20 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         PreviewKeyUp += OnGlobalKeyUp;
         PreviewTextInput += OnGlobalTextInput;
         Closing += OnWindowClosing;
+        Loaded += (_, _) => EnsureMainWindowOnScreen();
 
         ActivateTool(_tools[0]);
         NewDocumentFromDefaults();
+    }
+
+    private void EnsureMainWindowOnScreen()
+    {
+        if (WindowState != WindowState.Normal) return;
+        var area = SystemParameters.WorkArea;
+        Width = Math.Min(Width, area.Width);
+        Height = Math.Min(Height, area.Height);
+        Left = Math.Clamp(double.IsNaN(Left) ? area.Left : Left, area.Left, Math.Max(area.Left, area.Right - Width));
+        Top = Math.Clamp(double.IsNaN(Top) ? area.Top : Top, area.Top, Math.Max(area.Top, area.Bottom - Height));
     }
 
     // ---------------- layout ----------------
@@ -98,7 +111,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
 
         // Panel sites must exist before the View menu (its toggle items
         // reference them); the dock grid is added to the layout further down.
-        var panelsGrid = BuildRightPanels();
+        BuildRightPanels();
 
         _menuBar = BuildMenu();
         DockPanel.SetDock(_menuBar, Dock.Top);
@@ -130,9 +143,13 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         DockPanel.SetDock(paletteBorder, Dock.Left);
         root.Children.Add(paletteBorder);
 
-        // Right dock column (holds whichever panels the user snaps in).
-        DockPanel.SetDock(panelsGrid, Dock.Right);
-        root.Children.Add(panelsGrid);
+        // Panels can snap around three sides of the canvas area.
+        DockPanel.SetDock(_topDock, Dock.Top);
+        root.Children.Add(_topDock);
+        DockPanel.SetDock(_leftDock, Dock.Left);
+        root.Children.Add(_leftDock);
+        DockPanel.SetDock(_rightDock, Dock.Right);
+        root.Children.Add(_rightDock);
 
         // Center: tab strip + document view.
         var center = new DockPanel();
@@ -193,7 +210,9 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
     }
 
     private readonly List<PanelSite> _panelSites = new();
+    private readonly Grid _leftDock = new();
     private readonly Grid _rightDock = new();
+    private readonly Grid _topDock = new();
 
     private Grid BuildRightPanels()
     {
@@ -248,20 +267,49 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         }
         _rightDock.Children.Clear();
         _rightDock.RowDefinitions.Clear();
+        _leftDock.Children.Clear();
+        _leftDock.RowDefinitions.Clear();
+        _topDock.Children.Clear();
+        _topDock.ColumnDefinitions.Clear();
 
-        var docked = _panelSites.Where(s => s.State.Docked && s.State.Visible).ToList();
-        _rightDock.Width = docked.Count == 0 ? 0 : 280;
+        BuildVerticalDock(_leftDock, PanelDockEdge.Left);
+        BuildVerticalDock(_rightDock, PanelDockEdge.Right);
+        BuildTopDock();
+    }
+
+    private void BuildVerticalDock(Grid grid, PanelDockEdge edge)
+    {
+        var docked = DockedAt(edge).ToList();
+        grid.Width = docked.Count == 0 ? 0 : 280;
         int row = 0;
         foreach (var site in docked)
         {
-            _rightDock.RowDefinitions.Add(site.Name == "colors"
+            grid.RowDefinitions.Add(site.Name == "colors"
                 ? new RowDefinition { Height = GridLength.Auto }
                 : new RowDefinition { Height = new GridLength(site.Name == "layers" ? 1.3 : 1, GridUnitType.Star) });
             var box = BuildDockBox(site);
             Grid.SetRow(box, row++);
-            _rightDock.Children.Add(box);
+            grid.Children.Add(box);
         }
     }
+
+    private void BuildTopDock()
+    {
+        var docked = DockedAt(PanelDockEdge.Top).ToList();
+        _topDock.Height = docked.Count == 0 ? 0 : 230;
+        int column = 0;
+        foreach (var site in docked)
+        {
+            _topDock.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 220 });
+            var box = BuildDockBox(site);
+            Grid.SetColumn(box, column++);
+            _topDock.Children.Add(box);
+        }
+    }
+
+    private IEnumerable<PanelSite> DockedAt(PanelDockEdge edge) =>
+        _panelSites.Where(s => s.State.Docked && s.State.Visible &&
+            string.Equals(s.State.DockSide, edge.ToString(), StringComparison.OrdinalIgnoreCase));
 
     private Border BuildDockBox(PanelSite site)
     {
@@ -318,7 +366,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         if (site.Window == null)
         {
             site.Window = new FloatingPanelWindow(site.Title, this);
-            site.Window.DockRequested += (_, _) => DockSite(site);
+            site.Window.DockRequested += edge => DockSite(site, edge);
             site.Window.HideRequested += (_, _) => SetPanelVisible(site, false);
             ApplyShortcuts(site.Window.InputBindings);
         }
@@ -345,9 +393,10 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
             SavePanelStates();
     }
 
-    private void DockSite(PanelSite site)
+    private void DockSite(PanelSite site, PanelDockEdge edge = PanelDockEdge.Right)
     {
         site.State.Docked = true;
+        site.State.DockSide = edge.ToString();
         if (site.Window != null)
         {
             site.State.X = site.Window.Left;
@@ -833,7 +882,13 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
                 case Key.H: ActivateToolByType<PanTool>(); e.Handled = true; break;
                 case Key.Z: ActivateToolByType<ZoomTool>(); e.Handled = true; break;
                 case Key.Q: ActivateToolByType<ColorRemoverTool>(); e.Handled = true; break;
-                case Key.Delete: DeleteSelectionPixels(); e.Handled = true; break;
+                case Key.Delete:
+                    if (_layersPanel.IsLayerListFocused)
+                        _layersPanel.DeleteSelectedLayer();
+                    else
+                        DeleteSelectionPixels();
+                    e.Handled = true;
+                    break;
             }
         }
     }

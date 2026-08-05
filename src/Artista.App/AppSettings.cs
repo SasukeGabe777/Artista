@@ -8,6 +8,7 @@ namespace Artista.App;
 public sealed class PanelState
 {
     public bool Docked { get; set; }
+    public string DockSide { get; set; } = "Right";
     public bool Visible { get; set; } = true;
     public double X { get; set; }
     public double Y { get; set; }

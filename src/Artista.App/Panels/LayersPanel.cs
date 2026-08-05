@@ -42,9 +42,18 @@ public sealed class LayersPanel : DockPanel
         };
         _list.PreviewMouseLeftButtonDown += OnListMouseDown;
         _list.PreviewMouseMove += OnListMouseMove;
+        _list.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Delete) return;
+            DeleteSelectedLayer();
+            e.Handled = true;
+        };
         _list.MouseDoubleClick += (_, _) => host.LayerProperties();
         Children.Add(_list);
     }
+
+    internal void DeleteSelectedLayer() => _host.LayerDelete();
+    internal bool IsLayerListFocused => _list.IsKeyboardFocusWithin;
 
     private Button IconButton(string iconKey, string tooltip, RoutedEventHandler onClick)
     {

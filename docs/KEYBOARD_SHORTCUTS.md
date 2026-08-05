@@ -19,7 +19,7 @@ Also available in-app: **Help → Keyboard Shortcuts** (or **F1**).
 | Ctrl+Y / Ctrl+Shift+Z | Redo |
 | Ctrl+X / Ctrl+C / Ctrl+V | Cut / Copy / Paste (paste creates a new layer) |
 | Ctrl+Alt+V | Paste into new image |
-| Delete | Clear selected pixels |
+| Delete | Clear selected pixels; when the Layers list has focus, delete that layer |
 | Ctrl+A | Select all |
 | Ctrl+D / Ctrl+Shift+A / Esc | Deselect (Esc when nothing is in progress; a plain click with a selection tool also deselects) |
 | Ctrl+I | Invert selection |

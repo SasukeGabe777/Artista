@@ -109,6 +109,10 @@ public sealed partial class MainWindow
         // 1. Startup state: a default document exists.
         await PumpAsync(200);
         Check(_active != null, "application started with a default document");
+        Check(WindowStyle == WindowStyle.SingleBorderWindow && ResizeMode == ResizeMode.CanResize,
+            "startup window exposes the standard minimize, maximize, and close controls");
+        Check(Top >= SystemParameters.WorkArea.Top && Left >= SystemParameters.WorkArea.Left,
+            "startup title bar is kept inside the usable screen");
         Snapshot("01-startup");
 
         // 2. New transparent document.
@@ -214,9 +218,9 @@ public sealed partial class MainWindow
         Check(_layersPanel.SelectLayer(topLayer.Id), "top layer can be reselected");
         topLayer.Opacity = 128;
         _active.InvalidateComposite(_active.Document.Bounds);
-        LayerDelete();
+        _layersPanel.DeleteSelectedLayer();
         await PumpAsync();
-        Check(_active.Document.Layers.Count == layerCountBefore, "layer deleted");
+        Check(_active.Document.Layers.Count == layerCountBefore, "Delete in the Layers panel deletes the selected layer");
         Undo();
         await PumpAsync();
         Check(_active.Document.Layers.Count == layerCountBefore + 1, "undo restored deleted layer");
@@ -353,7 +357,31 @@ public sealed partial class MainWindow
         // 21. Dirty-close confirmation path is exercised interactively; verify flag.
         Check(_active.IsDirty, "document marked dirty after edits");
 
-        // 21b. Copy/paste preserves transparency (PNG clipboard format).
+        // 21b. Copy without a pixel selection uses the active layer's content
+        // bounds rather than the merged, full-size canvas.
+        try
+        {
+            CreateDocument(50, 40, "Transparent");
+            await PumpAsync();
+            var copyLayer = _active!.Document.ActiveLayer;
+            uint copyRed = Core.Imaging.ColorBgra.Pack(0, 0, 255, 255);
+            copyLayer.Surface.FillRect(new RectInt(7, 9, 11, 6), copyRed);
+            LayerAdd();
+            _active.Document.ActiveLayer.Surface.Clear(Core.Imaging.ColorBgra.Pack(255, 0, 0, 255));
+            _layersPanel.SelectLayer(copyLayer.Id);
+            Check(TryCopyToClipboard(), "Ctrl+C copied the selected active layer");
+            var croppedCopy = GetClipboardSurface();
+            Check(croppedCopy is { Width: 11, Height: 6 } && croppedCopy[0, 0] == copyRed,
+                "Ctrl+C crops active-layer content instead of selecting the entire canvas");
+            CloseWorkspace(_active);
+            await PumpAsync();
+        }
+        catch (Exception ex)
+        {
+            Fail($"active-layer clipboard copy threw: {ex.Message}");
+        }
+
+        // 21c. Copy/paste preserves transparency (PNG clipboard format).
         try
         {
             CreateDocument(60, 60, "Transparent");
@@ -383,7 +411,7 @@ public sealed partial class MainWindow
             Fail($"clipboard round trip threw: {ex.Message}");
         }
 
-        // 21bb. Oversized paste retains off-canvas pixels and can expand canvas.
+        // 21d. Oversized paste retains off-canvas pixels and can expand canvas.
         try
         {
             var oversized = new Surface(80, 40);
@@ -435,6 +463,36 @@ public sealed partial class MainWindow
             Fail($"oversized paste workflows threw: {ex.Message}");
         }
 
+        // 21e. Pasted pixels expose corner resize handles; Shift preserves ratio.
+        try
+        {
+            CreateDocument(100, 70, "Transparent");
+            await PumpAsync();
+            var resizeSource = new Surface(12, 6);
+            resizeSource.Clear(Core.Imaging.ColorBgra.Pack(20, 180, 80, 255));
+            PasteSurface(resizeSource, expandCanvas: false);
+            var resizeMove = (MoveSelectedPixelsTool)_activeTool!;
+            var start = resizeMove.FloatingBounds;
+            resizeMove.OnPointerDown(Pt(start.Right, start.Bottom));
+            resizeMove.OnPointerMove(Pt(start.Right + 24, start.Bottom + 18,
+                PointerButton.Left, ModifierKeys.Shift));
+            resizeMove.OnPointerUp(Pt(start.Right + 24, start.Bottom + 18));
+            var resized = resizeMove.FloatingBounds;
+            Check(resized.Width == 48 && resized.Height == 24,
+                "Shift-dragging a paste corner resizes while preserving aspect ratio");
+            await PumpAsync();
+            Snapshot("16-paste-resize-handles");
+            resizeMove.Commit();
+            Check(Core.Imaging.ColorBgra.A(_active!.Document.ActiveLayer.Surface[resized.Right - 1, resized.Bottom - 1]) == 255,
+                "resized pasted pixels are committed across the new bounds");
+            CloseWorkspace(_active);
+            await PumpAsync();
+        }
+        catch (Exception ex)
+        {
+            Fail($"pasted-image resize threw: {ex.Message}");
+        }
+
         int layersBeforeDroppedImport = _active!.Document.Layers.Count;
         bool importedDroppedLayer = ImportLayerFromPath(pngPath);
         Check(importedDroppedLayer && _active.Document.Layers.Count == layersBeforeDroppedImport + 1,
@@ -443,7 +501,7 @@ public sealed partial class MainWindow
             "drag/drop imported layer becomes active");
         Undo();
 
-        // 21c. Click-to-deselect and Escape cancel/deselect behavior.
+        // 21f. Click-to-deselect and Escape cancel/deselect behavior.
         var wand2 = Tool<MagicWandTool>();
         wand2.OnPointerDown(Pt(10, 10));
         await PumpAsync();
@@ -472,15 +530,26 @@ public sealed partial class MainWindow
         CancelActiveOperationOrDeselect();
         Check(_active.Document.Selection.IsEmpty, "Escape deselects when the active tool is idle");
 
-        // 21d. Floating panels exist by default and can dock/undock/toggle.
+        // 21g. Floating panels can dock on every supported canvas edge.
         var historySite = _panelSites.First(s => s.Name == "history");
-        Check(!historySite.State.Docked, "history panel is floating by default");
+        FloatSite(historySite);
+        await PumpAsync();
+        Check(!historySite.State.Docked, "history panel can be floated");
         Check(historySite.Window is { IsVisible: true }, "history floating window is shown");
         if (historySite.Window != null)
             SnapshotVisual(historySite.Window, "13-floating-history");
-        DockSite(historySite);
+        DockSite(historySite, Panels.PanelDockEdge.Left);
         await PumpAsync();
-        Check(historySite.State.Docked && historySite.DockHost != null, "history panel docked");
+        Check(historySite.State.Docked && historySite.DockHost != null && historySite.State.DockSide == "Left",
+            "history panel docks on the left");
+        DockSite(historySite, Panels.PanelDockEdge.Top);
+        await PumpAsync();
+        Check(historySite.State.DockSide == "Top" && _topDock.Children.Count > 0,
+            "history panel docks above the canvas");
+        DockSite(historySite, Panels.PanelDockEdge.Right);
+        await PumpAsync();
+        Check(historySite.State.DockSide == "Right" && _rightDock.Children.Count > 0,
+            "history panel docks on the right");
         FloatSite(historySite);
         await PumpAsync();
         Check(!historySite.State.Docked && historySite.Window is { IsVisible: true }, "history panel floated again");
@@ -537,6 +606,7 @@ public sealed partial class MainWindow
         pasteChoiceDlg.Show();
         await PumpAsync(100);
         Check(pasteChoiceDlg.IsVisible, "oversized-paste choice dialog opened");
+        Check(pasteChoiceDlg.Topmost, "oversized-paste choice stays above its source window");
         SnapshotVisual(pasteChoiceDlg, "14-paste-choice-dialog");
         pasteChoiceDlg.Close();
 
@@ -544,6 +614,7 @@ public sealed partial class MainWindow
         dropChoiceDlg.Show();
         await PumpAsync(100);
         Check(dropChoiceDlg.IsVisible, "drag-and-drop choice dialog opened");
+        Check(dropChoiceDlg.Topmost, "drag-and-drop choice stays visible above File Explorer");
         SnapshotVisual(dropChoiceDlg, "15-drop-choice-dialog");
         dropChoiceDlg.Close();
     }

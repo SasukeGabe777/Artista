@@ -6,6 +6,13 @@ using System.Windows.Shell;
 
 namespace Artista.App.Panels;
 
+public enum PanelDockEdge
+{
+    Left,
+    Right,
+    Top,
+}
+
 /// <summary>
 /// A Paint.NET-style floating tool window: slim themed header (drag to move,
 /// dock and close buttons), resizable border, always above the main window,
@@ -16,7 +23,7 @@ public sealed class FloatingPanelWindow : Window
     private readonly ScrollViewer _contentHost = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
 
     /// <summary>Raised when the user drops the window near the dock edge or clicks the dock button.</summary>
-    public event EventHandler? DockRequested;
+    public event Action<PanelDockEdge>? DockRequested;
 
     /// <summary>Raised when the user closes (hides) the panel.</summary>
     public event EventHandler? HideRequested;
@@ -56,7 +63,7 @@ public sealed class FloatingPanelWindow : Window
         var closeButton = HeaderButton("✕", "Hide panel (reopen from the View menu)");
         closeButton.Click += (_, _) => HideRequested?.Invoke(this, EventArgs.Empty);
         var dockButton = HeaderButton("⇥", "Dock into the side panel (drag near the window edge also docks)");
-        dockButton.Click += (_, _) => DockRequested?.Invoke(this, EventArgs.Empty);
+        dockButton.Click += (_, _) => DockRequested?.Invoke(NearestDockEdge());
         DockPanel.SetDock(closeButton, Dock.Right);
         DockPanel.SetDock(dockButton, Dock.Right);
         headerRow.Children.Add(closeButton);
@@ -67,7 +74,7 @@ public sealed class FloatingPanelWindow : Window
         {
             if (e.ClickCount == 2)
             {
-                DockRequested?.Invoke(this, EventArgs.Empty);
+                DockRequested?.Invoke(NearestDockEdge());
                 return;
             }
             try { DragMove(); } catch { /* only valid while button down */ }
@@ -108,12 +115,35 @@ public sealed class FloatingPanelWindow : Window
     private void CheckDockProximity()
     {
         if (Owner == null) return;
-        double ownerRight = Owner.Left + Owner.ActualWidth;
+        double ownerLeft = Owner.Left;
+        double ownerRight = ownerLeft + Owner.ActualWidth;
+        double ownerTop = Owner.Top;
         double verticalOverlap = Math.Min(Top + ActualHeight, Owner.Top + Owner.ActualHeight) -
                                  Math.Max(Top, Owner.Top);
-        if (Math.Abs(Left + ActualWidth - ownerRight) < 45 && verticalOverlap >= 32)
+        double horizontalOverlap = Math.Min(Left + ActualWidth, ownerRight) - Math.Max(Left, ownerLeft);
+        var candidates = new List<(double Distance, PanelDockEdge Edge)>();
+        if (verticalOverlap >= 32)
         {
-            DockRequested?.Invoke(this, EventArgs.Empty);
+            candidates.Add((Math.Abs(Left - ownerLeft), PanelDockEdge.Left));
+            candidates.Add((Math.Abs(Left + ActualWidth - ownerRight), PanelDockEdge.Right));
         }
+        if (horizontalOverlap >= 32)
+            candidates.Add((Math.Abs(Top - ownerTop), PanelDockEdge.Top));
+        if (candidates.Count == 0) return;
+        var nearest = candidates.OrderBy(c => c.Distance).FirstOrDefault();
+        if (nearest.Distance < 45)
+            DockRequested?.Invoke(nearest.Edge);
+    }
+
+    private PanelDockEdge NearestDockEdge()
+    {
+        if (Owner == null) return PanelDockEdge.Right;
+        var distances = new[]
+        {
+            (Math.Abs(Left - Owner.Left), PanelDockEdge.Left),
+            (Math.Abs(Left + ActualWidth - (Owner.Left + Owner.ActualWidth)), PanelDockEdge.Right),
+            (Math.Abs(Top - Owner.Top), PanelDockEdge.Top),
+        };
+        return distances.OrderBy(x => x.Item1).First().Item2;
     }
 }

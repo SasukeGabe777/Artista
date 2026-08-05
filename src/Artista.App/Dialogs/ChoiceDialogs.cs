@@ -34,6 +34,7 @@ public sealed class PasteSizeDialog : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
+        Topmost = true;
         FontFamily = new FontFamily("Segoe UI");
         FontSize = 14;
         SetResourceReference(BackgroundProperty, "WindowBackgroundBrush");
@@ -147,6 +148,7 @@ public sealed class FileDropDialog : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
+        Topmost = true;
         FontFamily = new FontFamily("Segoe UI");
         FontSize = 14;
         SetResourceReference(BackgroundProperty, "WindowBackgroundBrush");

@@ -328,11 +328,12 @@ public sealed class MoveSelectedPixelsTool : ToolBase
 {
     public override string Name => "Move Selected Pixels";
     public override string IconKey => "Icon.MovePixels";
-    public override string StatusHint => "Drag to move the selected pixels. Enter commits, Escape cancels.";
+    public override string StatusHint => "Drag to move. Drag a pasted image's corner to resize; hold Shift to preserve its aspect ratio.";
     public override Cursor Cursor => Cursors.SizeAll;
 
     private Surface? _floating;          // lifted pixels (tight rect)
     private RectInt _floatSourceRect;    // where they were lifted from
+    private RectInt _operationStartRect; // original position, retained for history
     private int _offsetX, _offsetY;      // current offset from source
     private Surface? _layerSnapshot;     // layer before lift (for history/cancel)
     private byte[]? _selectionSnapshot;
@@ -342,8 +343,14 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     private bool _hasMoved;
     private Point _dragStartDoc;
     private int _dragStartOffsetX, _dragStartOffsetY;
+    private ResizeCorner _resizeCorner;
+    private RectInt _resizeStartRect;
+    private Surface? _resizeSource;
+
+    private enum ResizeCorner { None, TopLeft, TopRight, BottomLeft, BottomRight }
 
     public bool IsFloating => _floating != null;
+    internal RectInt FloatingBounds => _floating == null ? RectInt.Empty : FloatRect();
 
     public override bool IsBusy => IsFloating;
 
@@ -364,9 +371,17 @@ public sealed class MoveSelectedPixelsTool : ToolBase
                 return;
             }
             LiftSelection(ws, layer);
+            if (_floating == null) return;
         }
 
+        _resizeCorner = _externalFloat ? HitResizeHandle(e.X, e.Y) : ResizeCorner.None;
         _dragging = true;
+        if (_resizeCorner != ResizeCorner.None)
+        {
+            _resizeStartRect = FloatRect();
+            _resizeSource = _floating.Clone();
+            return;
+        }
         _dragStartDoc = new Point(e.X, e.Y);
         _dragStartOffsetX = _offsetX;
         _dragStartOffsetY = _offsetY;
@@ -382,6 +397,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         _layerSnapshot = layer.Surface.Clone();
         _selectionSnapshot = doc.Selection.SnapshotMask();
         _floatSourceRect = bounds;
+        _operationStartRect = bounds;
         _offsetX = _offsetY = 0;
         _externalFloat = false;
         _hasMoved = false;
@@ -416,6 +432,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         _layerId = layer.Id;
         _layerSnapshot = layer.Surface.Clone();
         _floatSourceRect = new RectInt(originX, originY, source.Width, source.Height);
+        _operationStartRect = _floatSourceRect;
         _offsetX = _offsetY = 0;
         _floating = source;
         _externalFloat = true;
@@ -428,10 +445,88 @@ public sealed class MoveSelectedPixelsTool : ToolBase
 
     public override void OnPointerMove(ToolPointerEventArgs e)
     {
-        if (!_dragging || _floating == null || Context.Workspace == null) return;
+        if (_floating == null || Context.Workspace == null) return;
+        if (!_dragging)
+        {
+            var corner = _externalFloat ? HitResizeHandle(e.X, e.Y) : ResizeCorner.None;
+            Context.SetCursorHint(corner switch
+            {
+                ResizeCorner.TopLeft or ResizeCorner.BottomRight => Cursors.SizeNWSE,
+                ResizeCorner.TopRight or ResizeCorner.BottomLeft => Cursors.SizeNESW,
+                _ => Cursor,
+            });
+            return;
+        }
+        if (_resizeCorner != ResizeCorner.None)
+        {
+            ResizeTo(e.X, e.Y, (e.Modifiers & ModifierKeys.Shift) != 0);
+            return;
+        }
         int newOffsetX = _dragStartOffsetX + (int)Math.Round(e.X - _dragStartDoc.X);
         int newOffsetY = _dragStartOffsetY + (int)Math.Round(e.Y - _dragStartDoc.Y);
         MoveTo(newOffsetX, newOffsetY);
+    }
+
+    private ResizeCorner HitResizeHandle(double x, double y)
+    {
+        var r = FloatRect();
+        double radius = 7 / Math.Max(0.05, Context.ZoomFactor);
+        var handles = new[]
+        {
+            (DistanceSquared(x, y, r.Left, r.Top), ResizeCorner.TopLeft),
+            (DistanceSquared(x, y, r.Right, r.Top), ResizeCorner.TopRight),
+            (DistanceSquared(x, y, r.Left, r.Bottom), ResizeCorner.BottomLeft),
+            (DistanceSquared(x, y, r.Right, r.Bottom), ResizeCorner.BottomRight),
+        };
+        var nearest = handles.OrderBy(h => h.Item1).First();
+        return nearest.Item1 <= radius * radius ? nearest.Item2 : ResizeCorner.None;
+    }
+
+    private static double DistanceSquared(double x, double y, double hx, double hy) =>
+        (x - hx) * (x - hx) + (y - hy) * (y - hy);
+
+    private void ResizeTo(double x, double y, bool preserveAspect)
+    {
+        if (_resizeSource == null || _floating == null || Context.Workspace == null) return;
+        var oldRect = FloatRect();
+        bool fromLeft = _resizeCorner is ResizeCorner.TopLeft or ResizeCorner.BottomLeft;
+        bool fromTop = _resizeCorner is ResizeCorner.TopLeft or ResizeCorner.TopRight;
+        int fixedX = fromLeft ? _resizeStartRect.Right : _resizeStartRect.Left;
+        int fixedY = fromTop ? _resizeStartRect.Bottom : _resizeStartRect.Top;
+        int movingX = (int)Math.Round(x);
+        int movingY = (int)Math.Round(y);
+        int width = Math.Max(1, fromLeft ? fixedX - movingX : movingX - fixedX);
+        int height = Math.Max(1, fromTop ? fixedY - movingY : movingY - fixedY);
+
+        if (preserveAspect)
+        {
+            double scaleX = (double)width / _resizeStartRect.Width;
+            double scaleY = (double)height / _resizeStartRect.Height;
+            if (scaleX >= scaleY)
+                height = Math.Max(1, (int)Math.Round(width * (double)_resizeStartRect.Height / _resizeStartRect.Width));
+            else
+                width = Math.Max(1, (int)Math.Round(height * (double)_resizeStartRect.Width / _resizeStartRect.Height));
+        }
+
+        int left = fromLeft ? fixedX - width : fixedX;
+        int top = fromTop ? fixedY - height : fixedY;
+        var newRect = new RectInt(left, top, width, height);
+        if (newRect == oldRect) return;
+
+        _floating = _resizeSource.Resized(width, height, ResampleMode.Bilinear);
+        _floatSourceRect = newRect;
+        _offsetX = _offsetY = 0;
+        _hasMoved = true;
+
+        var ws = Context.Workspace;
+        var layer = ws.Document.FindLayer(_layerId);
+        if (layer == null) return;
+        var dirty = oldRect.Union(newRect).Intersect(ws.Document.Bounds);
+        RestoreClearedRegion(layer, dirty);
+        layer.Surface.DrawSurfaceOver(_floating, newRect.Left, newRect.Top);
+        SetSelectionToFloatRect();
+        Context.InvalidateDocument(dirty);
+        Context.NotifySelectionChanged();
     }
 
     private void MoveTo(int newOffsetX, int newOffsetY)
@@ -499,8 +594,25 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     {
         if (!_dragging) return;
         _dragging = false;
+        _resizeCorner = ResizeCorner.None;
+        _resizeSource = null;
         // Keep floating until commit so the user can keep adjusting.
         SyncSelectionToFloat();
+    }
+
+    public override void OnRenderOverlay(DrawingContext dc, CanvasTransform transform)
+    {
+        if (!_externalFloat || _floating == null) return;
+        var r = FloatRect();
+        var tl = transform.DocToView(r.Left, r.Top);
+        var br = transform.DocToView(r.Right, r.Bottom);
+        var outline = new Rect(tl, br);
+        var border = new Pen(Brushes.DodgerBlue, 1.25);
+        border.Freeze();
+        dc.DrawRectangle(null, border, outline);
+        const double size = 9;
+        foreach (var p in new[] { tl, new Point(br.X, tl.Y), new Point(tl.X, br.Y), br })
+            dc.DrawRectangle(Brushes.White, border, new Rect(p.X - size / 2, p.Y - size / 2, size, size));
     }
 
     private void SyncSelectionToFloat()
@@ -557,7 +669,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         {
             // Layer pixels already reflect the final state; build one history step
             // covering the whole affected area plus the selection change.
-            var affected = _floatSourceRect.Union(FloatRect()).Intersect(ws.Document.Bounds);
+            var affected = _operationStartRect.Union(FloatRect()).Intersect(ws.Document.Bounds);
             var beforePixels = _layerSnapshot.ExtractRect(affected);
             var mementos = new List<HistoryMemento>
             {
@@ -595,6 +707,8 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         _layerId = -1;
         _offsetX = _offsetY = 0;
         _dragging = false;
+        _resizeCorner = ResizeCorner.None;
+        _resizeSource = null;
         _externalFloat = false;
         _hasMoved = false;
     }
