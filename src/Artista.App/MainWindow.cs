@@ -570,7 +570,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         {
             var toggle = new ToggleButton
             {
-                Content = IconPath(tool.IconKey, 23, 1.45),
+                Content = ToolIconFactory.Create(tool),
                 Tag = tool,
                 Width = 42,
                 Height = 38,

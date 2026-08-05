@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -604,8 +605,18 @@ public sealed partial class MainWindow
             "familiar two-column Tools palette floats as a real panel");
         Check(_toolPalette.Children.OfType<ToggleButton>().All(b => b.Width == 42 && b.Height == 38),
             "Tools palette uses larger Paint.NET-style hit targets");
+        Check(_toolPalette.Children.OfType<ToggleButton>().All(b =>
+                b.Content is Viewbox { Child: Canvas canvas } && canvas.Children.Count > 0),
+            "all tools use the redesigned colored vector icon system");
         if (toolsSite.Window != null)
+        {
             SnapshotVisual(toolsSite.Window, "18-floating-tools");
+            SetTheme(AppTheme.Light);
+            await PumpAsync();
+            SnapshotVisual(toolsSite.Window, "19-floating-tools-light");
+            SetTheme(AppTheme.Dark);
+            await PumpAsync();
+        }
         DockSite(toolsSite, Panels.PanelDockEdge.Top);
         await PumpAsync();
         Check(toolsSite.State.Docked && _toolPalette.Columns == 12,
