@@ -153,6 +153,7 @@ public sealed partial class MainWindow
         view.Items.Add(new Separator());
         foreach (var (name, header, gesture) in new[]
         {
+            ("tools", "_Tools panel", "F5"),
             ("colors", "_Colors panel", "F8"),
             ("history", "H_istory panel", "F6"),
             ("layers", "La_yers panel", "F7"),
@@ -343,6 +344,7 @@ public sealed partial class MainWindow
         Bind(Key.B, ModifierKeys.Control, () => { _documentView.FitToWindow(); UpdateZoomStatus(); });
         Bind(Key.D1, ModifierKeys.Control | ModifierKeys.Shift, () => { _documentView.ActualSize(); UpdateZoomStatus(); });
         Bind(Key.F1, ModifierKeys.None, () => new ShortcutsDialog { Owner = this }.ShowDialog());
+        Bind(Key.F5, ModifierKeys.None, () => TogglePanel("tools"));
         Bind(Key.F6, ModifierKeys.None, () => TogglePanel("history"));
         Bind(Key.F7, ModifierKeys.None, () => TogglePanel("layers"));
         Bind(Key.F8, ModifierKeys.None, () => TogglePanel("colors"));
@@ -825,8 +827,8 @@ public sealed partial class MainWindow
         moveTool.BeginPaste(surface, targetLayer, layerBeforePaste, ox, oy);
         PushHistory(pasteMemento ?? throw new InvalidOperationException("Paste history was not initialized."), "Icon.Paste");
         SetStatus(expandCanvas
-            ? "Pasted into the selected layer and expanded the canvas. Drag a corner to resize; hold Shift to preserve aspect ratio."
-            : "Pasted into the selected layer. Drag a corner to resize (Shift preserves aspect ratio); Enter finishes and deselects.");
+            ? "Pasted into the selected layer and expanded the canvas. Use corners to resize or the round handle to rotate."
+            : "Pasted into the selected layer. Use corners to resize or the round handle to rotate; Enter finishes and deselects.");
     }
 
     private void EditPasteIntoNewImage()
@@ -1258,7 +1260,7 @@ public sealed class ShortcutsDialog : DialogBase
             ("+ / - or Ctrl+wheel", "Zoom in / out (cursor centered)"),
             ("Ctrl+B / Ctrl+Shift+1", "Fit to window / actual size"),
             ("Space+drag or middle-drag", "Pan the view (works while scrolling)"),
-            ("F6 / F7 / F8", "Toggle History / Layers / Colors panels"),
+            ("F5 / F6 / F7 / F8", "Toggle Tools / History / Layers / Colors panels"),
             ("Escape / Enter", "Cancel / commit the current operation"),
             ("X", "Swap primary and secondary colors"),
             ("B / E / P", "Paintbrush / Eraser / Pencil"),

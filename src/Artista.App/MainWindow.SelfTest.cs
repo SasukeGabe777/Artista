@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Controls.Primitives;
 using Artista.App.Tools;
 using Artista.Core.Effects;
 using Artista.Core.Imaging;
@@ -392,7 +393,7 @@ public sealed partial class MainWindow
                 initialLayerPaste.Top + initialLayerPaste.Height / 2.0);
             Check(pasteTarget.Surface[initialLayerPaste.Left, initialLayerPaste.Top] == pasteBlue,
                 "moving a paste restores pixels that were already in the target layer");
-            layerPasteMove.CommitAndDeselect();
+            CommitFromEnter();
             Check(_active.Document.Selection.IsEmpty,
                 "Enter-style Move Selected Pixels commit deselects the floating pixels");
             Undo();
@@ -510,11 +511,39 @@ public sealed partial class MainWindow
             var resized = resizeMove.FloatingBounds;
             Check(resized.Width == 48 && resized.Height == 24,
                 "Shift-dragging a paste corner resizes while preserving aspect ratio");
+
+            // Temporarily release Shift during another resize, then reapply it.
+            // The preview may distort while Shift is up, but Shift must return to
+            // the immutable source ratio rather than preserving that preview ratio.
+            resizeMove.OnPointerDown(Pt(resized.Right, resized.Bottom));
+            resizeMove.OnPointerMove(Pt(resized.Right + 20, resized.Bottom + 20));
+            var unconstrained = resizeMove.FloatingBounds;
+            Check(unconstrained.Width != unconstrained.Height * 2,
+                "unconstrained paste resize can preview a temporary aspect ratio");
+            resizeMove.OnPointerMove(Pt(resized.Right + 20, resized.Bottom + 20,
+                PointerButton.Left, ModifierKeys.Shift));
+            resizeMove.OnPointerUp(Pt(resized.Right + 20, resized.Bottom + 20));
+            resized = resizeMove.FloatingBounds;
+            Check(resized.Width == resized.Height * 2,
+                "reapplying Shift restores the original source aspect ratio");
+
+            var beforeRotate = resized;
+            var rotateHandle = resizeMove.RotationHandle;
+            double handleDistance = 26 / Math.Max(0.05, ZoomFactor);
+            double centerX = beforeRotate.Left + beforeRotate.Width / 2.0;
+            double centerY = beforeRotate.Top + beforeRotate.Height / 2.0;
+            resizeMove.OnPointerDown(Pt(rotateHandle.X, rotateHandle.Y));
+            resizeMove.OnPointerMove(Pt(centerX + handleDistance, centerY,
+                PointerButton.Left, ModifierKeys.Shift));
+            resizeMove.OnPointerUp(Pt(centerX + handleDistance, centerY));
+            resized = resizeMove.FloatingBounds;
+            Check(Math.Abs(Math.Abs(resizeMove.RotationDegrees) - 90) < 0.1 && resized.Height > resized.Width,
+                "round transform handle rotates pasted pixels and Shift snaps to 15-degree steps");
             await PumpAsync();
             Snapshot("16-paste-resize-handles");
             resizeMove.Commit();
-            Check(Core.Imaging.ColorBgra.A(_active!.Document.ActiveLayer.Surface[resized.Right - 1, resized.Bottom - 1]) == 255,
-                "resized pasted pixels are committed across the new bounds");
+            Check(Core.Imaging.ColorBgra.A(_active!.Document.ActiveLayer.Surface[(int)centerX, (int)centerY]) == 255,
+                "resized and rotated pasted pixels commit from the immutable source");
             CloseWorkspace(_active);
             await PumpAsync();
         }
@@ -560,8 +589,31 @@ public sealed partial class MainWindow
         CancelActiveOperationOrDeselect();
         Check(_active.Document.Selection.IsEmpty, "Escape deselects when the active tool is idle");
 
+        ActivateTool(rectSel2);
+        DragTool(rectSel2, 20, 20, 70, 70);
+        Check(!_active.Document.Selection.IsEmpty, "rectangle selection exists before Enter");
+        CommitFromEnter();
+        Check(_active.Document.Selection.IsEmpty, "Enter commits and deselects Rectangle Select");
+
         // 21g. Floating panels can dock on every supported canvas edge.
         var historySite = _panelSites.First(s => s.Name == "history");
+        var toolsSite = _panelSites.First(s => s.Name == "tools");
+        FloatSite(toolsSite);
+        await PumpAsync();
+        Check(toolsSite.Window is { IsVisible: true } && _toolPalette.Children.Count == 24,
+            "familiar two-column Tools palette floats as a real panel");
+        Check(_toolPalette.Children.OfType<ToggleButton>().All(b => b.Width == 42 && b.Height == 38),
+            "Tools palette uses larger Paint.NET-style hit targets");
+        if (toolsSite.Window != null)
+            SnapshotVisual(toolsSite.Window, "18-floating-tools");
+        DockSite(toolsSite, Panels.PanelDockEdge.Top);
+        await PumpAsync();
+        Check(toolsSite.State.Docked && _toolPalette.Columns == 12,
+            "Tools palette reflows horizontally when docked above the canvas");
+        FloatSite(toolsSite);
+        await PumpAsync();
+        Check(!toolsSite.State.Docked && _toolPalette.Columns == 2,
+            "Tools palette returns to two columns when floated");
         ShowDockGuides(true);
         await PumpAsync();
         Check(_dockGuideOverlay.IsVisible && _dockGuideOverlay.Children.Count == 3,

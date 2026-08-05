@@ -46,14 +46,14 @@ Also available in-app: **Help → Keyboard Shortcuts** (or **F1**).
 | Ctrl+B | Fit to window |
 | Ctrl+Shift+1 | Actual size (100%) |
 | Space+drag / middle-drag | Pan (wheel-scrolling works at the same time) |
-| F6 / F7 / F8 | Toggle History / Layers / Colors panels |
+| F5 / F6 / F7 / F8 | Toggle Tools / History / Layers / Colors panels |
 
 ## Tools (single keys)
 | Key | Tool |
 |---|---|
 | S | Rectangle Select |
 | W | Magic Wand |
-| M | Move Selected Pixels |
+| M | Move Selected Pixels (corners resize; round handle rotates) |
 | B | Paintbrush |
 | E | Eraser |
 | P | Pencil |

@@ -1,7 +1,7 @@
 # Session handoff — Artista polish pass (completed 2026-08-04)
 
 Working doc for continuing work across sessions. The app is COMPLETE and verified
-(82 unit tests + 103 UI self-test checks pass; see README). This file tracks the
+(82 unit tests + 112 UI self-test checks pass; see README). This file tracks the
 **user's polish punch list** from their first review, its status, and exactly how
 to continue.
 
@@ -18,7 +18,7 @@ to continue.
 1. **[DONE] Wheel scrolls document vertically (Shift = horizontal), Ctrl+wheel zooms** —
    `DocumentView.OnCanvasMouseWheel` rewritten; pan baselines (`_panStartOffsetX/Y`) shifted so wheel-scroll works concurrently during middle-button panning.
 2. **[DONE] Middle-click drag pans** — already existed (`_middlePanning` in DocumentView); concurrency with wheel handled per item 1.
-3. **[DONE] Colors / History / Layers are free-floating windows by default**, with themed headers, resize/drag behavior, visible labeled left/right/top snap targets, persisted placement and visibility, View-menu toggles, and F6/F7/F8 shortcuts. Shared shortcuts and title-bar theme updates work in floating windows.
+3. **[DONE] Tools / Colors / History / Layers are free-floating windows by default**, with themed headers, resize/drag behavior, visible labeled left/right/top snap targets, persisted placement and visibility, View-menu toggles, and F5/F6/F7/F8 shortcuts. Tools uses the familiar two-column layout and reflows across the top dock.
 4. **[DONE] Selection outlines can be dismissed predictably** — plain clicks with Rectangle/Ellipse/Lasso Select deselect in Replace mode, Escape cancels a busy tool or deselects when idle, and Ctrl+D is a Deselect alias. Busy/cancel handling covers strokes, selections, shapes, gradients, curves, text, and floating pixels.
 5. **[DONE] Cut/copy/paste preserves transparency and layer targeting** — clipboard data includes a PNG representation and paste prefers it before falling back to the standard bitmap format. Paste floats with resize handles inside the selected layer without erasing pre-existing pixels when moved.
 6. **[DONE] Layer visibility toggles visually and records correct undo state** — layer properties are captured before mutation and pushed after the model is updated.
@@ -30,7 +30,7 @@ to continue.
 
 - Debug solution build: passed with 0 warnings and 0 errors.
 - Unit tests: 82 passed, 0 failed.
-- UI self-test: 103 passed, 0 failed; screenshot QA includes the main workspace, floating History panel, paste handles, docking targets, oversized-paste dialog, and drag/drop dialog.
+- UI self-test: 112 passed, 0 failed; screenshot QA includes the main workspace, floating Tools/History panels, transform handles, docking targets, oversized-paste dialog, and drag/drop dialog.
 - Release solution build: passed with 0 warnings and 0 errors using an alternate output directory while an older running Release instance held the normal output DLL open.
 
 ## Files most involved

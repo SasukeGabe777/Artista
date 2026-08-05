@@ -328,7 +328,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
 {
     public override string Name => "Move Selected Pixels";
     public override string IconKey => "Icon.MovePixels";
-    public override string StatusHint => "Drag to move. Drag a pasted image's corner to resize; hold Shift to preserve its aspect ratio.";
+    public override string StatusHint => "Drag to move, use corners to resize, or drag the round handle to rotate. Shift preserves the original aspect ratio.";
     public override Cursor Cursor => Cursors.SizeAll;
 
     private Surface? _floating;          // lifted pixels (tight rect)
@@ -346,12 +346,20 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     private int _dragStartOffsetX, _dragStartOffsetY;
     private ResizeCorner _resizeCorner;
     private RectInt _resizeStartRect;
-    private Surface? _resizeSource;
+    private Surface? _transformSource;
+    private int _contentWidth, _contentHeight;
+    private int _resizeStartContentWidth, _resizeStartContentHeight;
+    private double _rotationRadians;
+    private bool _rotating;
+    private double _rotateStartPointerAngle, _rotateStartRadians;
+    private Point _rotateCenter;
 
     private enum ResizeCorner { None, TopLeft, TopRight, BottomLeft, BottomRight }
 
     public bool IsFloating => _floating != null;
     internal RectInt FloatingBounds => _floating == null ? RectInt.Empty : FloatRect();
+    internal Point RotationHandle => _floating == null ? new Point(double.NaN, double.NaN) : RotationHandlePoint();
+    internal double RotationDegrees => _rotationRadians * 180 / Math.PI;
 
     public override bool IsBusy => IsFloating;
 
@@ -375,12 +383,22 @@ public sealed class MoveSelectedPixelsTool : ToolBase
             if (_floating == null) return;
         }
 
-        _resizeCorner = _externalFloat ? HitResizeHandle(e.X, e.Y) : ResizeCorner.None;
+        _rotating = _externalFloat && HitRotationHandle(e.X, e.Y);
+        _resizeCorner = !_rotating && _externalFloat ? HitResizeHandle(e.X, e.Y) : ResizeCorner.None;
         _dragging = true;
+        if (_rotating)
+        {
+            var r = FloatRect();
+            _rotateCenter = new Point(r.Left + r.Width / 2.0, r.Top + r.Height / 2.0);
+            _rotateStartPointerAngle = Math.Atan2(e.Y - _rotateCenter.Y, e.X - _rotateCenter.X);
+            _rotateStartRadians = _rotationRadians;
+            return;
+        }
         if (_resizeCorner != ResizeCorner.None)
         {
             _resizeStartRect = FloatRect();
-            _resizeSource = _floating.Clone();
+            _resizeStartContentWidth = _contentWidth;
+            _resizeStartContentHeight = _contentHeight;
             return;
         }
         _dragStartDoc = new Point(e.X, e.Y);
@@ -437,6 +455,10 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         _operationStartRect = _floatSourceRect;
         _offsetX = _offsetY = 0;
         _floating = source;
+        _transformSource = source.Clone();
+        _contentWidth = source.Width;
+        _contentHeight = source.Height;
+        _rotationRadians = 0;
         _externalFloat = true;
         _hasMoved = false;
         SetSelectionToFloatRect();
@@ -450,6 +472,11 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         if (_floating == null || Context.Workspace == null) return;
         if (!_dragging)
         {
+            if (_externalFloat && HitRotationHandle(e.X, e.Y))
+            {
+                Context.SetCursorHint(Cursors.Hand);
+                return;
+            }
             var corner = _externalFloat ? HitResizeHandle(e.X, e.Y) : ResizeCorner.None;
             Context.SetCursorHint(corner switch
             {
@@ -457,6 +484,11 @@ public sealed class MoveSelectedPixelsTool : ToolBase
                 ResizeCorner.TopRight or ResizeCorner.BottomLeft => Cursors.SizeNESW,
                 _ => Cursor,
             });
+            return;
+        }
+        if (_rotating)
+        {
+            RotateTo(e.X, e.Y, (e.Modifiers & ModifierKeys.Shift) != 0);
             return;
         }
         if (_resizeCorner != ResizeCorner.None)
@@ -487,9 +519,22 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     private static double DistanceSquared(double x, double y, double hx, double hy) =>
         (x - hx) * (x - hx) + (y - hy) * (y - hy);
 
+    private Point RotationHandlePoint()
+    {
+        var r = FloatRect();
+        return new Point(r.Left + r.Width / 2.0, r.Top - 26 / Math.Max(0.05, Context.ZoomFactor));
+    }
+
+    private bool HitRotationHandle(double x, double y)
+    {
+        var p = RotationHandlePoint();
+        double radius = 7 / Math.Max(0.05, Context.ZoomFactor);
+        return DistanceSquared(x, y, p.X, p.Y) <= radius * radius;
+    }
+
     private void ResizeTo(double x, double y, bool preserveAspect)
     {
-        if (_resizeSource == null || _floating == null || Context.Workspace == null) return;
+        if (_transformSource == null || _floating == null || Context.Workspace == null) return;
         var oldRect = FloatRect();
         bool fromLeft = _resizeCorner is ResizeCorner.TopLeft or ResizeCorner.BottomLeft;
         bool fromTop = _resizeCorner is ResizeCorner.TopLeft or ResizeCorner.TopRight;
@@ -497,38 +542,134 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         int fixedY = fromTop ? _resizeStartRect.Bottom : _resizeStartRect.Top;
         int movingX = (int)Math.Round(x);
         int movingY = (int)Math.Round(y);
-        int width = Math.Max(1, fromLeft ? fixedX - movingX : movingX - fixedX);
-        int height = Math.Max(1, fromTop ? fixedY - movingY : movingY - fixedY);
+        int targetWidth = Math.Max(1, fromLeft ? fixedX - movingX : movingX - fixedX);
+        int targetHeight = Math.Max(1, fromTop ? fixedY - movingY : movingY - fixedY);
 
         if (preserveAspect)
         {
-            double scaleX = (double)width / _resizeStartRect.Width;
-            double scaleY = (double)height / _resizeStartRect.Height;
-            if (scaleX >= scaleY)
-                height = Math.Max(1, (int)Math.Round(width * (double)_resizeStartRect.Height / _resizeStartRect.Width));
-            else
-                width = Math.Max(1, (int)Math.Round(height * (double)_resizeStartRect.Width / _resizeStartRect.Height));
+            var natural = RotatedBounds(_transformSource.Width, _transformSource.Height, _rotationRadians);
+            double scale = Math.Max((double)targetWidth / natural.Width, (double)targetHeight / natural.Height);
+            _contentWidth = Math.Clamp((int)Math.Round(_transformSource.Width * scale), 1, 32768);
+            _contentHeight = Math.Clamp((int)Math.Round(_transformSource.Height * scale), 1, 32768);
+        }
+        else
+        {
+            double scaleX = (double)targetWidth / _resizeStartRect.Width;
+            double scaleY = (double)targetHeight / _resizeStartRect.Height;
+            _contentWidth = Math.Clamp((int)Math.Round(_resizeStartContentWidth * scaleX), 1, 32768);
+            _contentHeight = Math.Clamp((int)Math.Round(_resizeStartContentHeight * scaleY), 1, 32768);
         }
 
-        int left = fromLeft ? fixedX - width : fixedX;
-        int top = fromTop ? fixedY - height : fixedY;
-        var newRect = new RectInt(left, top, width, height);
-        if (newRect == oldRect) return;
+        var transformed = BuildTransformedSurface();
+        int left = fromLeft ? fixedX - transformed.Width : fixedX;
+        int top = fromTop ? fixedY - transformed.Height : fixedY;
+        ApplyTransformedPreview(oldRect, transformed, new RectInt(left, top, transformed.Width, transformed.Height));
+    }
 
-        _floating = _resizeSource.Resized(width, height, ResampleMode.Bilinear);
+    private void RotateTo(double x, double y, bool snap)
+    {
+        if (_transformSource == null || _floating == null) return;
+        double pointerAngle = Math.Atan2(y - _rotateCenter.Y, x - _rotateCenter.X);
+        double angle = _rotateStartRadians + NormalizeAngle(pointerAngle - _rotateStartPointerAngle);
+        if (snap)
+        {
+            double step = Math.PI / 12; // 15 degrees
+            angle = Math.Round(angle / step) * step;
+        }
+        if (Math.Abs(angle - _rotationRadians) < 0.0001) return;
+        var oldRect = FloatRect();
+        _rotationRadians = angle;
+        var transformed = BuildTransformedSurface();
+        int left = (int)Math.Round(_rotateCenter.X - transformed.Width / 2.0);
+        int top = (int)Math.Round(_rotateCenter.Y - transformed.Height / 2.0);
+        ApplyTransformedPreview(oldRect, transformed, new RectInt(left, top, transformed.Width, transformed.Height));
+    }
+
+    private static double NormalizeAngle(double angle)
+    {
+        while (angle > Math.PI) angle -= Math.PI * 2;
+        while (angle < -Math.PI) angle += Math.PI * 2;
+        return angle;
+    }
+
+    private Surface BuildTransformedSurface()
+    {
+        var scaled = _transformSource!.Width == _contentWidth && _transformSource.Height == _contentHeight
+            ? _transformSource.Clone()
+            : _transformSource.Resized(_contentWidth, _contentHeight, ResampleMode.Bilinear);
+        return Math.Abs(_rotationRadians % (Math.PI * 2)) < 0.0001
+            ? scaled
+            : RotateSurface(scaled, _rotationRadians);
+    }
+
+    private void ApplyTransformedPreview(RectInt oldRect, Surface transformed, RectInt newRect)
+    {
+        if (Context.Workspace == null) return;
+        var layer = Context.Workspace.Document.FindLayer(_layerId);
+        if (layer == null) return;
+        _floating = transformed;
         _floatSourceRect = newRect;
         _offsetX = _offsetY = 0;
         _hasMoved = true;
-
-        var ws = Context.Workspace;
-        var layer = ws.Document.FindLayer(_layerId);
-        if (layer == null) return;
-        var dirty = oldRect.Union(newRect).Intersect(ws.Document.Bounds);
+        var dirty = oldRect.Union(newRect).Intersect(Context.Workspace.Document.Bounds);
         RestoreClearedRegion(layer, dirty);
         layer.Surface.DrawSurfaceOver(_floating, newRect.Left, newRect.Top);
         SetSelectionToFloatRect();
         Context.InvalidateDocument(dirty);
         Context.NotifySelectionChanged();
+    }
+
+    private static (int Width, int Height) RotatedBounds(int width, int height, double angle)
+    {
+        double c = Math.Abs(Math.Cos(angle)), s = Math.Abs(Math.Sin(angle));
+        return (Math.Max(1, (int)Math.Ceiling(width * c + height * s - 1e-9)),
+                Math.Max(1, (int)Math.Ceiling(width * s + height * c - 1e-9)));
+    }
+
+    private static Surface RotateSurface(Surface source, double angle)
+    {
+        var bounds = RotatedBounds(source.Width, source.Height, angle);
+        var result = new Surface(bounds.Width, bounds.Height);
+        double cos = Math.Cos(angle), sin = Math.Sin(angle);
+        double srcCx = (source.Width - 1) / 2.0, srcCy = (source.Height - 1) / 2.0;
+        double dstCx = (result.Width - 1) / 2.0, dstCy = (result.Height - 1) / 2.0;
+        Parallel.For(0, result.Height, y =>
+        {
+            for (int x = 0; x < result.Width; x++)
+            {
+                double dx = x - dstCx, dy = y - dstCy;
+                double sx = cos * dx + sin * dy + srcCx;
+                double sy = -sin * dx + cos * dy + srcCy;
+                if (sx < -0.5 || sy < -0.5 || sx > source.Width - 0.5 || sy > source.Height - 0.5)
+                    continue;
+                result[x, y] = SampleBilinear(source, sx, sy);
+            }
+        });
+        return result;
+    }
+
+    private static uint SampleBilinear(Surface source, double x, double y)
+    {
+        int x0 = Math.Clamp((int)Math.Floor(x), 0, source.Width - 1);
+        int y0 = Math.Clamp((int)Math.Floor(y), 0, source.Height - 1);
+        int x1 = Math.Min(x0 + 1, source.Width - 1), y1 = Math.Min(y0 + 1, source.Height - 1);
+        double fx = Math.Clamp(x - Math.Floor(x), 0, 1), fy = Math.Clamp(y - Math.Floor(y), 0, 1);
+        double[] weights = { (1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy };
+        uint[] colors = { source[x0, y0], source[x1, y0], source[x0, y1], source[x1, y1] };
+        double alpha = 0, b = 0, g = 0, r = 0;
+        for (int i = 0; i < 4; i++)
+        {
+            double weightedAlpha = ColorBgra.A(colors[i]) * weights[i];
+            alpha += weightedAlpha;
+            b += ColorBgra.B(colors[i]) * weightedAlpha;
+            g += ColorBgra.G(colors[i]) * weightedAlpha;
+            r += ColorBgra.R(colors[i]) * weightedAlpha;
+        }
+        if (alpha <= 0.0001) return 0;
+        return ColorBgra.Pack((byte)Math.Clamp(b / alpha + 0.5, 0, 255),
+            (byte)Math.Clamp(g / alpha + 0.5, 0, 255),
+            (byte)Math.Clamp(r / alpha + 0.5, 0, 255),
+            (byte)Math.Clamp(alpha + 0.5, 0, 255));
     }
 
     private void MoveTo(int newOffsetX, int newOffsetY)
@@ -605,7 +746,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         if (!_dragging) return;
         _dragging = false;
         _resizeCorner = ResizeCorner.None;
-        _resizeSource = null;
+        _rotating = false;
         // Keep floating until commit so the user can keep adjusting.
         SyncSelectionToFloat();
     }
@@ -623,6 +764,10 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         const double size = 9;
         foreach (var p in new[] { tl, new Point(br.X, tl.Y), new Point(tl.X, br.Y), br })
             dc.DrawRectangle(Brushes.White, border, new Rect(p.X - size / 2, p.Y - size / 2, size, size));
+        var rotate = transform.DocToView(RotationHandlePoint().X, RotationHandlePoint().Y);
+        var topCenter = new Point((tl.X + br.X) / 2, tl.Y);
+        dc.DrawLine(border, topCenter, rotate);
+        dc.DrawEllipse(Brushes.White, border, rotate, 5, 5);
     }
 
     private void SyncSelectionToFloat()
@@ -728,7 +873,10 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         _offsetX = _offsetY = 0;
         _dragging = false;
         _resizeCorner = ResizeCorner.None;
-        _resizeSource = null;
+        _transformSource = null;
+        _contentWidth = _contentHeight = 0;
+        _rotationRadians = 0;
+        _rotating = false;
         _externalFloat = false;
         _hasMoved = false;
     }

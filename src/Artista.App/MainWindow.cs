@@ -130,20 +130,6 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         DockPanel.SetDock(status, Dock.Bottom);
         root.Children.Add(status);
 
-        // Left tool palette.
-        var paletteBorder = new Border
-        {
-            Padding = new Thickness(3),
-            BorderThickness = new Thickness(0, 0, 1, 0),
-            VerticalAlignment = VerticalAlignment.Stretch,
-        };
-        paletteBorder.SetResourceReference(Border.BackgroundProperty, "PanelBackgroundBrush");
-        paletteBorder.SetResourceReference(Border.BorderBrushProperty, "BorderLightBrush");
-        _toolPalette.VerticalAlignment = VerticalAlignment.Top;
-        paletteBorder.Child = _toolPalette;
-        DockPanel.SetDock(paletteBorder, Dock.Left);
-        root.Children.Add(paletteBorder);
-
         // Panels can snap around three sides of the canvas area.
         DockPanel.SetDock(_topDock, Dock.Top);
         root.Children.Add(_topDock);
@@ -266,6 +252,17 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         _historyPanel = new HistoryPanel(this);
         _layersPanel = new LayersPanel(this);
 
+        var toolsHost = new Border { Padding = new Thickness(4), Child = _toolPalette };
+        toolsHost.SetResourceReference(Border.BackgroundProperty, "PanelBackgroundBrush");
+        _toolPalette.VerticalAlignment = VerticalAlignment.Top;
+        _toolPalette.HorizontalAlignment = HorizontalAlignment.Left;
+
+        _panelSites.Add(new PanelSite
+        {
+            Name = "tools", Title = "Tools", Content = toolsHost,
+            DefaultFloatRect = new Rect(18, 105, 112, 550),
+        });
+
         _panelSites.Add(new PanelSite
         {
             Name = "colors", Title = "Colors", Content = _colorsPanel,
@@ -326,10 +323,11 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
     private void BuildVerticalDock(Grid grid, PanelDockEdge edge)
     {
         var docked = DockedAt(edge).ToList();
-        grid.Width = docked.Count == 0 ? 0 : 280;
+        grid.Width = docked.Count == 0 ? 0 : docked.All(s => s.Name == "tools") ? 104 : 280;
         int row = 0;
         foreach (var site in docked)
         {
+            if (site.Name == "tools") _toolPalette.Columns = 2;
             grid.RowDefinitions.Add(site.Name == "colors"
                 ? new RowDefinition { Height = GridLength.Auto }
                 : new RowDefinition { Height = new GridLength(site.Name == "layers" ? 1.3 : 1, GridUnitType.Star) });
@@ -346,6 +344,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         int column = 0;
         foreach (var site in docked)
         {
+            if (site.Name == "tools") _toolPalette.Columns = 12;
             _topDock.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 220 });
             var box = BuildDockBox(site);
             Grid.SetColumn(box, column++);
@@ -391,7 +390,12 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         DockPanel.SetDock(header, Dock.Top);
         dock.Children.Add(header);
 
-        site.DockHost = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = site.Content };
+        site.DockHost = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = site.Content,
+        };
         dock.Children.Add(site.DockHost);
         outer.Child = dock;
         return outer;
@@ -401,6 +405,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
     {
         site.State.Docked = false;
         site.State.Visible = true;
+        if (site.Name == "tools") _toolPalette.Columns = 2;
         // Detach from the dock.
         if (site.DockHost != null)
         {
@@ -412,6 +417,11 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         if (site.Window == null)
         {
             site.Window = new FloatingPanelWindow(site.Title, this);
+            if (site.Name == "tools")
+            {
+                site.Window.MinWidth = 96;
+                site.Window.MinHeight = 240;
+            }
             site.Window.DockRequested += edge => DockSite(site, edge);
             site.Window.DockDragStateChanged += ShowDockGuides;
             site.Window.HideRequested += (_, _) => SetPanelVisible(site, false);
@@ -560,11 +570,12 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         {
             var toggle = new ToggleButton
             {
-                Content = IconPath(tool.IconKey, 17, 1.3),
+                Content = IconPath(tool.IconKey, 23, 1.45),
                 Tag = tool,
-                Width = 30,
-                Height = 28,
-                Margin = new Thickness(1),
+                Width = 42,
+                Height = 38,
+                Margin = new Thickness(1.5),
+                Padding = new Thickness(6),
                 ToolTip = tool.Name,
             };
             toggle.Click += (s, _) => ActivateTool((ToolBase)((FrameworkElement)s!).Tag);
@@ -896,10 +907,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
             }
             if (e.Key == Key.Enter && _activeTool is not TextTool)
             {
-                if (_activeTool is MoveSelectedPixelsTool movePixels)
-                    movePixels.CommitAndDeselect();
-                else
-                    _activeTool.OnCommit();
+                CommitFromEnter();
                 InvalidateOverlay();
                 e.Handled = true;
                 return;
@@ -941,6 +949,19 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
                     break;
             }
         }
+    }
+
+    private void CommitFromEnter()
+    {
+        if (_activeTool is MoveSelectedPixelsTool movePixels)
+        {
+            movePixels.CommitAndDeselect();
+            return;
+        }
+
+        _activeTool?.OnCommit();
+        if (_activeTool is SelectionToolBase or LassoSelectTool or MagicWandTool or MoveSelectionTool)
+            Deselect();
     }
 
     private void CancelActiveOperationOrDeselect()
