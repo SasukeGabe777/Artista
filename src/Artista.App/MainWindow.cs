@@ -751,9 +751,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
 
     public void ViewPanBy(double viewDx, double viewDy)
     {
-        _documentView.Canvas.OffsetX += viewDx;
-        _documentView.Canvas.OffsetY += viewDy;
-        _documentView.Canvas.InvalidateVisual();
+        _documentView.PanBy(viewDx, viewDy);
     }
 
     // ---------------- panels refresh ----------------

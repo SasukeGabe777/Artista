@@ -1,7 +1,7 @@
 # Session handoff — Artista polish pass (completed 2026-08-04)
 
 Working doc for continuing work across sessions. The app is COMPLETE and verified
-(81 unit tests + 66 UI self-test checks pass; see README). This file tracks the
+(81 unit tests + 67 UI self-test checks pass; see README). This file tracks the
 **user's polish punch list** from their first review, its status, and exactly how
 to continue.
 
@@ -30,7 +30,7 @@ to continue.
 
 - Debug solution build: passed with 0 warnings and 0 errors.
 - Unit tests: 81 passed, 0 failed.
-- UI self-test: 66 passed, 0 failed; screenshot QA completed for the main workspace and floating History panel.
+- UI self-test: 67 passed, 0 failed; screenshot QA completed for the main workspace and floating History panel.
 - Release solution build: passed with 0 warnings and 0 errors using an alternate output directory while an older running Release instance held the normal output DLL open.
 
 ## Files most involved

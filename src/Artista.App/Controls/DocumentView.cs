@@ -174,6 +174,17 @@ public sealed class DocumentView : Grid
         AfterViewChanged(false);
     }
 
+    public void PanBy(double viewDx, double viewDy) =>
+        SetPanOffsets(Canvas.OffsetX + viewDx, Canvas.OffsetY + viewDy);
+
+    private void SetPanOffsets(double offsetX, double offsetY)
+    {
+        Canvas.OffsetX = offsetX;
+        Canvas.OffsetY = offsetY;
+        ClampOffsets();
+        AfterViewChanged(false);
+    }
+
     private void ClampOffsets()
     {
         if (Workspace == null) return;
@@ -182,14 +193,16 @@ public sealed class DocumentView : Grid
         double viewW = Canvas.ActualWidth, viewH = Canvas.ActualHeight;
         const double slack = 48; // let the user push the image a bit past the edge
 
-        if (imgW <= viewW)
-            Canvas.OffsetX = (viewW - imgW) / 2;
-        else
-            Canvas.OffsetX = Math.Clamp(Canvas.OffsetX, viewW - imgW - slack, slack);
-        if (imgH <= viewH)
-            Canvas.OffsetY = (viewH - imgH) / 2;
-        else
-            Canvas.OffsetY = Math.Clamp(Canvas.OffsetY, viewH - imgH - slack, slack);
+        // Use the same padded bounds for images both larger and smaller than
+        // the viewport. The old small-image branch forcibly re-centered the
+        // canvas on every move, which made middle-drag and the Pan tool appear
+        // nonfunctional at common zoom levels.
+        double xEdgeA = slack;
+        double xEdgeB = viewW - imgW - slack;
+        double yEdgeA = slack;
+        double yEdgeB = viewH - imgH - slack;
+        Canvas.OffsetX = Math.Clamp(Canvas.OffsetX, Math.Min(xEdgeA, xEdgeB), Math.Max(xEdgeA, xEdgeB));
+        Canvas.OffsetY = Math.Clamp(Canvas.OffsetY, Math.Min(yEdgeA, yEdgeB), Math.Max(yEdgeA, yEdgeB));
     }
 
     private void AfterViewChanged(bool zoomChanged)
@@ -270,10 +283,9 @@ public sealed class DocumentView : Grid
         var viewPos = e.GetPosition(Canvas);
         if (_middlePanning)
         {
-            Canvas.OffsetX = _panStartOffsetX + (viewPos.X - _panStartView.X);
-            Canvas.OffsetY = _panStartOffsetY + (viewPos.Y - _panStartView.Y);
-            ClampOffsets();
-            AfterViewChanged(false);
+            SetPanOffsets(
+                _panStartOffsetX + (viewPos.X - _panStartView.X),
+                _panStartOffsetY + (viewPos.Y - _panStartView.Y));
             return;
         }
         var doc = Canvas.ViewToDoc(viewPos);

@@ -277,6 +277,14 @@ public sealed partial class MainWindow
         _documentView.FitToWindow();
         _documentView.ActualSize();
         Check(Math.Abs(_documentView.Zoom - 1.0) < 0.001, "actual size returns to 100%");
+        _documentView.CenterImage();
+        double panStartX = _documentView.Canvas.OffsetX;
+        double panStartY = _documentView.Canvas.OffsetY;
+        _documentView.PanBy(60, 40);
+        Check(Math.Abs(_documentView.Canvas.OffsetX - panStartX) > 1 &&
+              Math.Abs(_documentView.Canvas.OffsetY - panStartY) > 1,
+            "middle-drag pan can move a canvas smaller than the viewport");
+        _documentView.CenterImage();
 
         // 17. Theme switching.
         SetTheme(AppTheme.Light);
