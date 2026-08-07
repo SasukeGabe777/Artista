@@ -56,6 +56,7 @@ internal static class ToolIconFactory
             case RoundedRectangleTool: RoundedRectangle(c); break;
             case EllipseShapeTool: EllipseShape(c); break;
             case FreeformShapeTool: Freeform(c); break;
+            case SpritePreviewTool: SpritePreview(c); break;
             default: ResourceGlyph(c, tool.IconKey); break;
         }
         return new Viewbox { Width = 26, Height = 26, Stretch = Stretch.Uniform, Child = c };
@@ -227,6 +228,15 @@ internal static class ToolIconFactory
     private static void Freeform(Canvas c)
     {
         AddPath(c, "M4,16 C1,11 5,4 10,7 C14,2 21,5 20,11 C23,16 18,21 13,18 C9,22 3,21 4,16 Z", Brush("#B7E0D1"), Brush("#3F8970"), 1.3);
+    }
+
+    private static void SpritePreview(Canvas c)
+    {
+        AddRect(c, 2, 4, 20, 16, Brush("#26313A"), BlueDark, 1.2);
+        AddRect(c, 4, 6, 4, 4, GoldPale, Gold, 0.8);
+        AddRect(c, 10, 6, 4, 4, Brush("#B7E0D1"), Green, 0.8);
+        AddRect(c, 16, 6, 4, 4, Brush("#D5B5E8"), PurpleDark, 0.8);
+        AddPath(c, "M9,12 L9,18 L15,15 Z", Red, White, 0.9);
     }
 
     private static void ResourceGlyph(Canvas c, string key)

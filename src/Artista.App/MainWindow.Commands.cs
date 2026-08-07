@@ -22,7 +22,7 @@ public sealed partial class MainWindow
 {
     private MenuItem _recentMenu = null!;
     private MenuItem _themeDark = null!, _themeLight = null!, _themeSystem = null!;
-    private MenuItem _gridMenuItem = null!, _rulersMenuItem = null!;
+    private MenuItem _gridMenuItem = null!, _spriteGridMenuItem = null!, _rulersMenuItem = null!;
 
     // ---------------- menu construction ----------------
 
@@ -127,6 +127,17 @@ public sealed partial class MainWindow
             _documentView.Canvas.InvalidateVisual();
         };
         view.Items.Add(_gridMenuItem);
+        var spriteGrid = new MenuItem { Header = "_Sprite Grid" };
+        _spriteGridMenuItem = new MenuItem
+        {
+            Header = "_Show Sprite Grid",
+            IsCheckable = true,
+            IsChecked = App.Settings.ShowSpriteGrid,
+        };
+        _spriteGridMenuItem.Click += (_, _) => SetSpriteGridVisible(_spriteGridMenuItem.IsChecked);
+        spriteGrid.Items.Add(_spriteGridMenuItem);
+        spriteGrid.Items.Add(MI("_Adjust Cell Size\u2026", null, (_, _) => ConfigureSpriteGrid()));
+        view.Items.Add(spriteGrid);
         _rulersMenuItem = new MenuItem { Header = "_Rulers", IsCheckable = true, IsChecked = App.Settings.ShowRulers };
         _rulersMenuItem.Click += (_, _) =>
         {
@@ -167,6 +178,55 @@ public sealed partial class MainWindow
             view.Items.Add(item);
         }
         return view;
+    }
+
+    private void SetSpriteGridVisible(bool visible)
+    {
+        App.Settings.ShowSpriteGrid = visible;
+        _documentView.Canvas.ShowSpriteGrid = visible;
+        App.Settings.Save();
+        _documentView.Canvas.InvalidateVisual();
+        SetStatus(visible
+            ? $"Sprite Grid: {App.Settings.SpriteGridCellWidth} x {App.Settings.SpriteGridCellHeight} px. Rectangle Select now snaps to complete frames."
+            : "Sprite Grid hidden. Rectangle Select uses freehand bounds.");
+    }
+
+    private void ConfigureSpriteGrid()
+    {
+        if (_active == null) return;
+        bool wasVisible = _documentView.Canvas.ShowSpriteGrid;
+        int oldWidth = _documentView.Canvas.SpriteGridCellWidth;
+        int oldHeight = _documentView.Canvas.SpriteGridCellHeight;
+        var dialog = new SpriteGridDialog(
+            _active.Document.Width,
+            _active.Document.Height,
+            App.Settings.SpriteGridCellWidth,
+            App.Settings.SpriteGridCellHeight,
+            (width, height) =>
+            {
+                _documentView.Canvas.ShowSpriteGrid = true;
+                _documentView.Canvas.SpriteGridCellWidth = width;
+                _documentView.Canvas.SpriteGridCellHeight = height;
+                _documentView.Canvas.InvalidateVisual();
+            })
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            _documentView.Canvas.ShowSpriteGrid = wasVisible;
+            _documentView.Canvas.SpriteGridCellWidth = oldWidth;
+            _documentView.Canvas.SpriteGridCellHeight = oldHeight;
+            _documentView.Canvas.InvalidateVisual();
+            return;
+        }
+
+        App.Settings.SpriteGridCellWidth = dialog.CellWidth;
+        App.Settings.SpriteGridCellHeight = dialog.CellHeight;
+        _documentView.Canvas.SpriteGridCellWidth = dialog.CellWidth;
+        _documentView.Canvas.SpriteGridCellHeight = dialog.CellHeight;
+        _spriteGridMenuItem.IsChecked = true;
+        SetSpriteGridVisible(true);
     }
 
     private void SetTheme(AppTheme theme)

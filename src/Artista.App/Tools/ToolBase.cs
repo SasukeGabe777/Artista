@@ -59,6 +59,9 @@ public interface IToolContext
     void SetStatus(string text);
     void SetCursorHint(Cursor cursor);
     double ZoomFactor { get; }
+    bool IsSpriteGridActive { get; }
+    int SpriteGridCellWidth { get; }
+    int SpriteGridCellHeight { get; }
 
     /// <summary>Refresh panels after selection/structure changes.</summary>
     void NotifySelectionChanged();
@@ -69,6 +72,9 @@ public interface IToolContext
     void ViewZoomOutAt(System.Windows.Point docPoint);
     void ViewZoomToRect(RectInt docRect);
     void ViewPanBy(double viewDx, double viewDy);
+
+    /// <summary>Builds an animation preview from the current frame regions or pasteboard pieces.</summary>
+    void OpenSpritePreview();
 }
 
 /// <summary>

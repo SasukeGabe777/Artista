@@ -218,6 +218,9 @@ public class FileIoTests
         doc.Layers.Add(l2);
         doc.ActiveLayerIndex = 1;
         doc.Metadata["author"] = "test";
+        var parked = new Surface(3, 2);
+        parked[1, 1] = ColorBgra.Pack(30, 20, 10, 200);
+        doc.PasteboardItems.Add(new PasteboardItem(parked, -7, 14, "Spare eye"));
         doc.Selection.Combine(
             Core.Selections.SelectionRasterizer.RasterizeRectangle(12, 10, 2, 2, 8, 8),
             Core.Selections.SelectionCombineMode.Replace);
@@ -241,6 +244,13 @@ public class FileIoTests
             Assert.Equal(ColorBgra.Pack(9, 8, 7, 255), loaded.Layers[0].Surface[0, 0]);
             Assert.Equal(ColorBgra.Pack(1, 2, 3, 4), loaded.Layers[1].Surface[3, 3]);
             Assert.Equal("test", loaded.Metadata["author"]);
+            var loadedParked = Assert.Single(loaded.PasteboardItems);
+            Assert.Equal("Spare eye", loadedParked.Name);
+            Assert.Equal(-7, loadedParked.X);
+            Assert.Equal(14, loadedParked.Y);
+            Assert.Equal(3, loadedParked.Surface.Width);
+            Assert.Equal(2, loadedParked.Surface.Height);
+            Assert.Equal(ColorBgra.Pack(30, 20, 10, 200), loadedParked.Surface[1, 1]);
             Assert.False(loaded.Selection.IsEmpty);
             Assert.Equal(255, loaded.Selection.MaskAt(5, 5));
             Assert.Equal(0, loaded.Selection.MaskAt(0, 0));

@@ -24,9 +24,12 @@ public static class ArtzFormat
     private sealed record LayerInfo(
         string Name, bool Visible, bool Locked, bool AlphaLocked, byte Opacity, string BlendMode);
 
+    private sealed record PasteboardInfo(string Name, int X, int Y, int Width, int Height);
+
     private sealed record DocumentInfo(
         int Version, int Width, int Height, int ActiveLayerIndex,
-        List<LayerInfo> Layers, Dictionary<string, string>? Metadata, bool HasSelection);
+        List<LayerInfo> Layers, Dictionary<string, string>? Metadata, bool HasSelection,
+        List<PasteboardInfo>? Pasteboard);
 
     public static void Save(Document doc, string path)
     {
@@ -38,7 +41,9 @@ public static class ArtzFormat
                 doc.Layers.Select(l => new LayerInfo(
                     l.Name, l.Visible, l.Locked, l.AlphaLocked, l.Opacity, l.BlendMode.ToString())).ToList(),
                 doc.Metadata.Count > 0 ? doc.Metadata : null,
-                !doc.Selection.IsEmpty);
+                !doc.Selection.IsEmpty,
+                doc.PasteboardItems.Count == 0 ? null : doc.PasteboardItems.Select(i =>
+                    new PasteboardInfo(i.Name, i.X, i.Y, i.Surface.Width, i.Surface.Height)).ToList());
 
             var jsonEntry = zip.CreateEntry("document.json");
             using (var js = jsonEntry.Open())
@@ -55,6 +60,19 @@ public static class ArtzFormat
                 encoder.Save(ms);
                 ms.Position = 0;
                 var entry = zip.CreateEntry($"layers/{i}.png");
+                using var es = entry.Open();
+                ms.CopyTo(es);
+            }
+
+            for (int i = 0; i < doc.PasteboardItems.Count; i++)
+            {
+                var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(
+                    ImageCodec.ToBitmapSource(doc.PasteboardItems[i].Surface)));
+                using var ms = new MemoryStream();
+                encoder.Save(ms);
+                ms.Position = 0;
+                var entry = zip.CreateEntry($"pasteboard/{i}.png");
                 using var es = entry.Open();
                 ms.CopyTo(es);
             }
@@ -125,6 +143,27 @@ public static class ArtzFormat
         if (info.Metadata != null)
             foreach (var (k, v) in info.Metadata)
                 doc.Metadata[k] = v;
+
+        if (info.Pasteboard != null)
+        {
+            for (int i = 0; i < info.Pasteboard.Count; i++)
+            {
+                var itemInfo = info.Pasteboard[i];
+                var entry = zip.GetEntry($"pasteboard/{i}.png")
+                    ?? throw new InvalidDataException($"Project is missing pasteboard item {i}.");
+                using var es = entry.Open();
+                using var ms = new MemoryStream();
+                es.CopyTo(ms);
+                ms.Position = 0;
+                var decoder = System.Windows.Media.Imaging.BitmapDecoder.Create(
+                    ms, System.Windows.Media.Imaging.BitmapCreateOptions.PreservePixelFormat,
+                    System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
+                var surface = ImageCodec.FromBitmapSource(decoder.Frames[0]);
+                if (surface.Width != itemInfo.Width || surface.Height != itemInfo.Height)
+                    throw new InvalidDataException($"Pasteboard item {i} size does not match its metadata.");
+                doc.PasteboardItems.Add(new PasteboardItem(surface, itemInfo.X, itemInfo.Y, itemInfo.Name));
+            }
+        }
 
         var selEntry = zip.GetEntry("selection.png");
         if (selEntry != null && info.HasSelection)

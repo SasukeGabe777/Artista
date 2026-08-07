@@ -71,6 +71,10 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
             tool.Attach(this);
 
         Content = BuildLayout();
+        _documentView.Canvas.ShowPixelGrid = App.Settings.ShowPixelGrid;
+        _documentView.Canvas.ShowSpriteGrid = App.Settings.ShowSpriteGrid;
+        _documentView.Canvas.SpriteGridCellWidth = Math.Max(1, App.Settings.SpriteGridCellWidth);
+        _documentView.Canvas.SpriteGridCellHeight = Math.Max(1, App.Settings.SpriteGridCellHeight);
         BuildToolPalette();
         RegisterShortcuts();
 
@@ -344,7 +348,7 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         int column = 0;
         foreach (var site in docked)
         {
-            if (site.Name == "tools") _toolPalette.Columns = 12;
+            if (site.Name == "tools") _toolPalette.Columns = 13;
             _topDock.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 220 });
             var box = BuildDockBox(site);
             Grid.SetColumn(box, column++);
@@ -833,6 +837,17 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
 
     public double ZoomFactor => _documentView.Zoom;
 
+    public bool IsSpriteGridActive =>
+        _active != null &&
+        _documentView.Canvas.ShowSpriteGrid &&
+        _documentView.Canvas.SpriteGridCellWidth > 0 &&
+        _documentView.Canvas.SpriteGridCellHeight > 0 &&
+        _documentView.Canvas.SpriteGridCellWidth <= _active.Document.Width &&
+        _documentView.Canvas.SpriteGridCellHeight <= _active.Document.Height;
+
+    public int SpriteGridCellWidth => _documentView.Canvas.SpriteGridCellWidth;
+    public int SpriteGridCellHeight => _documentView.Canvas.SpriteGridCellHeight;
+
     public void NotifySelectionChanged() => _documentView.Canvas.InvalidateVisual();
 
     public void NotifyLayersChanged() => RefreshAllPanels();
@@ -898,6 +913,17 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         if (e.OriginalSource is TextBox) return;
         if (_activeTool != null)
         {
+            // While the Text tool is editing, ordinary key presses must be
+            // allowed to become PreviewTextInput events instead of falling
+            // through to the single-key tool shortcuts below (for example,
+            // typing "e" must not activate the Eraser).
+            if (_activeTool is TextTool { IsEditing: true } editingText)
+            {
+                if (editingText.OnKeyDown(e.Key, Keyboard.Modifiers))
+                    e.Handled = true;
+                return;
+            }
+
             if (e.Key == Key.Escape)
             {
                 CancelActiveOperationOrDeselect();

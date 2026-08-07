@@ -3,6 +3,7 @@ obj/
 *.user
 .vs/
 TestResults/
+dist/
 OpenPDN-master/
 OpenPDN-master.zip
 Screenshot*.png

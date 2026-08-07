@@ -18,6 +18,7 @@ public sealed class Document
     public int ActiveLayerIndex { get; set; }
     public Selection Selection { get; set; }
     public Dictionary<string, string> Metadata { get; } = new();
+    public List<PasteboardItem> PasteboardItems { get; } = new();
 
     public RectInt Bounds => new(0, 0, Width, Height);
 

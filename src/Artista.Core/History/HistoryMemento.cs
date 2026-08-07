@@ -198,6 +198,30 @@ public sealed class SelectionMemento : HistoryMemento
     }
 }
 
+/// <summary>Restores the persistent off-canvas pasteboard pieces.</summary>
+public sealed class PasteboardStateMemento : HistoryMemento
+{
+    private List<PasteboardItem> _items;
+
+    public PasteboardStateMemento(string name, Document doc) : this(name, doc.PasteboardItems)
+    {
+    }
+
+    public PasteboardStateMemento(string name, IEnumerable<PasteboardItem> items) : base(name) =>
+        _items = items.ToList();
+
+    public override long SizeEstimate => _items.Sum(i => i.Surface.ByteCount + 96);
+
+    public override HistoryMemento Apply(Document doc)
+    {
+        var inverse = new PasteboardStateMemento(Name, doc);
+        doc.PasteboardItems.Clear();
+        doc.PasteboardItems.AddRange(_items);
+        _items = new List<PasteboardItem>();
+        return inverse;
+    }
+}
+
 /// <summary>Restores the active layer index.</summary>
 public sealed class ActiveLayerMemento : HistoryMemento
 {

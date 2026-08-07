@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using Artista.Core.Documents;
 using Artista.Core.History;
 using Artista.Core.Imaging;
 using Artista.Core.Selections;
@@ -16,6 +18,13 @@ public abstract class SelectionToolBase : ToolBase
     protected Point Start;
     protected Point Current;
     private byte[]? _maskBefore;
+
+    protected virtual bool IsPlainClick =>
+        Math.Abs(Current.X - Start.X) < 2 && Math.Abs(Current.Y - Start.Y) < 2;
+
+    protected virtual bool ConstrainProportions => true;
+
+    protected virtual Rect DragBounds => new(Start, Current);
 
     public override ToolSettingKind[] SettingsBar => new[] { ToolSettingKind.CombineMode, ToolSettingKind.Feather };
     public override string StatusHint =>
@@ -41,7 +50,7 @@ public abstract class SelectionToolBase : ToolBase
     {
         if (!Dragging) return;
         Current = new Point(e.X, e.Y);
-        if ((e.Modifiers & ModifierKeys.Shift) != 0)
+        if (ConstrainProportions && (e.Modifiers & ModifierKeys.Shift) != 0)
         {
             // Constrain to square/circle.
             double dx = Current.X - Start.X, dy = Current.Y - Start.Y;
@@ -60,8 +69,7 @@ public abstract class SelectionToolBase : ToolBase
 
         // A plain click (no meaningful drag) in Replace mode deselects,
         // like Paint.NET.
-        if (Math.Abs(Current.X - Start.X) < 2 && Math.Abs(Current.Y - Start.Y) < 2 &&
-            mode == SelectionCombineMode.Replace && e.Modifiers == ModifierKeys.None)
+        if (IsPlainClick && mode == SelectionCombineMode.Replace && e.Modifiers == ModifierKeys.None)
         {
             if (!doc.Selection.IsEmpty)
             {
@@ -96,8 +104,9 @@ public abstract class SelectionToolBase : ToolBase
     public override void OnRenderOverlay(DrawingContext dc, CanvasTransform t)
     {
         if (!Dragging) return;
-        var p0 = t.DocToView(Start.X, Start.Y);
-        var p1 = t.DocToView(Current.X, Current.Y);
+        var drag = DragBounds;
+        var p0 = t.DocToView(drag.Left, drag.Top);
+        var p1 = t.DocToView(drag.Right, drag.Bottom);
         var rect = new Rect(p0, p1);
         var pen = new Pen(Brushes.White, 1);
         var penDash = new Pen(Brushes.Black, 1) { DashStyle = new DashStyle(new double[] { 3, 3 }, 0) };
@@ -112,9 +121,57 @@ public sealed class RectangleSelectTool : SelectionToolBase
 {
     public override string Name => "Rectangle Select";
     public override string IconKey => "Icon.RectSelect";
+    public override string StatusHint => GridActive
+        ? "Drag across red Sprite Grid cells to select complete frames. Ctrl adds cells; Alt removes them."
+        : base.StatusHint;
 
-    protected override byte[] BuildMask(int width, int height) =>
-        SelectionRasterizer.RasterizeRectangle(width, height, Start.X, Start.Y, Current.X, Current.Y);
+    private bool GridActive => Context.IsSpriteGridActive;
+
+    private RectInt SnappedBounds
+    {
+        get
+        {
+            var doc = Context.Workspace?.Document;
+            if (doc == null) return RectInt.Empty;
+            return new SpriteGridLayout(Context.SpriteGridCellWidth, Context.SpriteGridCellHeight)
+                .SnapDrag(Start.X, Start.Y, Current.X, Current.Y, doc.Width, doc.Height);
+        }
+    }
+
+    protected override bool IsPlainClick => !GridActive && base.IsPlainClick;
+    protected override bool ConstrainProportions => !GridActive;
+    protected override Rect DragBounds => GridActive && !SnappedBounds.IsEmpty
+        ? new Rect(SnappedBounds.X, SnappedBounds.Y, SnappedBounds.Width, SnappedBounds.Height)
+        : base.DragBounds;
+
+    protected override byte[] BuildMask(int width, int height)
+    {
+        if (!GridActive)
+            return SelectionRasterizer.RasterizeRectangle(width, height, Start.X, Start.Y, Current.X, Current.Y);
+        var bounds = SnappedBounds;
+        return SelectionRasterizer.RasterizeRectangle(width, height,
+            bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
+    }
+
+    public override void OnRenderOverlay(DrawingContext dc, CanvasTransform t)
+    {
+        if (!Dragging || !GridActive)
+        {
+            base.OnRenderOverlay(dc, t);
+            return;
+        }
+
+        var bounds = SnappedBounds;
+        if (bounds.IsEmpty) return;
+        var topLeft = t.DocToView(bounds.Left, bounds.Top);
+        var bottomRight = t.DocToView(bounds.Right, bounds.Bottom);
+        var rect = new Rect(topLeft, bottomRight);
+        var fill = new SolidColorBrush(Color.FromArgb(58, 255, 35, 45));
+        var border = new Pen(new SolidColorBrush(Color.FromArgb(245, 255, 55, 65)), 2);
+        fill.Freeze();
+        border.Freeze();
+        dc.DrawRectangle(fill, border, rect);
+    }
 }
 
 public sealed class EllipseSelectTool : SelectionToolBase
@@ -328,10 +385,11 @@ public sealed class MoveSelectedPixelsTool : ToolBase
 {
     public override string Name => "Move Selected Pixels";
     public override string IconKey => "Icon.MovePixels";
-    public override string StatusHint => "Drag to move, use corners to resize, or drag the round handle to rotate. Shift preserves the original aspect ratio.";
+    public override string StatusHint => "Drag pixels completely beyond the canvas to park them on the pasteboard; click a parked piece to use it later.";
     public override Cursor Cursor => Cursors.SizeAll;
 
     private Surface? _floating;          // lifted pixels (tight rect)
+    private BitmapSource? _floatingBitmap;
     private RectInt _floatSourceRect;    // where they were lifted from
     private RectInt _operationStartRect; // original position, retained for history
     private int _offsetX, _offsetY;      // current offset from source
@@ -342,6 +400,9 @@ public sealed class MoveSelectedPixelsTool : ToolBase
     private bool _dragging;
     private bool _externalFloat;
     private bool _hasMoved;
+    private bool _originatedFromPasteboard;
+    private string _floatingName = "Pasteboard item";
+    private List<PasteboardItem>? _pasteboardSnapshot;
     private Point _dragStartDoc;
     private int _dragStartOffsetX, _dragStartOffsetY;
     private ResizeCorner _resizeCorner;
@@ -369,22 +430,42 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         if (ws == null) return;
         var doc = ws.Document;
         var layer = doc.ActiveLayer;
+        bool pickedUpPasteboardItem = false;
 
         if (_floating == null)
         {
-            if (doc.Selection.IsEmpty || layer.Locked || !layer.Visible)
+            var parked = HitTestPasteboard(doc, e.X, e.Y);
+            if (parked != null)
             {
-                Context.SetStatus(doc.Selection.IsEmpty
-                    ? "Make a selection first, then drag to move its pixels."
-                    : "The active layer is locked or hidden.");
-                return;
+                if (layer.Locked || !layer.Visible)
+                {
+                    Context.SetStatus("Select an unlocked, visible target layer before placing a pasteboard item.");
+                    return;
+                }
+                LiftPasteboardItem(ws, layer, parked);
+                pickedUpPasteboardItem = true;
             }
-            LiftSelection(ws, layer);
-            if (_floating == null) return;
+            else
+            {
+                if (doc.Selection.IsEmpty || layer.Locked || !layer.Visible)
+                {
+                    Context.SetStatus(doc.Selection.IsEmpty
+                        ? "Make a selection first, or click a parked pasteboard item."
+                        : "The active layer is locked or hidden.");
+                    return;
+                }
+                LiftSelection(ws, layer);
+                if (_floating == null) return;
+            }
         }
 
-        _rotating = _externalFloat && HitRotationHandle(e.X, e.Y);
-        _resizeCorner = !_rotating && _externalFloat ? HitResizeHandle(e.X, e.Y) : ResizeCorner.None;
+        // The first press on a parked piece always begins a move. Resize and
+        // rotation handles become active on subsequent presses once the piece
+        // has visibly entered its floating/editable state.
+        _rotating = !pickedUpPasteboardItem && _externalFloat && HitRotationHandle(e.X, e.Y);
+        _resizeCorner = !pickedUpPasteboardItem && !_rotating && _externalFloat
+            ? HitResizeHandle(e.X, e.Y)
+            : ResizeCorner.None;
         _dragging = true;
         if (_rotating)
         {
@@ -420,6 +501,9 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         _offsetX = _offsetY = 0;
         _externalFloat = false;
         _hasMoved = false;
+        _originatedFromPasteboard = false;
+        _floatingName = "Selection";
+        _pasteboardSnapshot = doc.PasteboardItems.ToList();
 
         _floating = new Surface(bounds.Width, bounds.Height);
         for (int y = 0; y < bounds.Height; y++)
@@ -434,10 +518,56 @@ public sealed class MoveSelectedPixelsTool : ToolBase
                 dstRow[x] = ColorBgra.WithAlpha(c, (byte)(ColorBgra.A(c) * cov / 255));
             }
         }
+        UpdateFloatingBitmap();
         // Keep the source pixels exact until the pointer actually moves. The
         // first MoveTo call restores/clears from the snapshot and stamps the
         // floating pixels at their new position.
         Context.InvalidateOverlay();
+    }
+
+    private PasteboardItem? HitTestPasteboard(Document doc, double x, double y)
+    {
+        int px = (int)Math.Floor(x), py = (int)Math.Floor(y);
+        if (doc.Bounds.Contains(px, py)) return null;
+        for (int i = doc.PasteboardItems.Count - 1; i >= 0; i--)
+        {
+            var item = doc.PasteboardItems[i];
+            if (!item.Bounds.Contains(px, py)) continue;
+            int localX = px - item.X, localY = py - item.Y;
+            if (ColorBgra.A(item.Surface[localX, localY]) > 0)
+                return item;
+        }
+        return null;
+    }
+
+    private void LiftPasteboardItem(Models.DocumentWorkspace ws, Core.Layers.Layer layer, PasteboardItem item)
+    {
+        var doc = ws.Document;
+        _pasteboardSnapshot = doc.PasteboardItems.ToList();
+        doc.PasteboardItems.Remove(item);
+        _layerId = layer.Id;
+        _layerSnapshot = layer.Surface.Clone();
+        _externalBaseSnapshot = _layerSnapshot;
+        _selectionSnapshot = doc.Selection.SnapshotMask();
+        _floatSourceRect = item.Bounds;
+        _operationStartRect = item.Bounds;
+        _offsetX = _offsetY = 0;
+        _floating = item.Surface;
+        _transformSource = item.Surface.Clone();
+        _contentWidth = item.Surface.Width;
+        _contentHeight = item.Surface.Height;
+        _rotationRadians = 0;
+        _externalFloat = true;
+        _originatedFromPasteboard = true;
+        _floatingName = item.Name;
+        _hasMoved = false;
+        UpdateFloatingBitmap();
+
+        layer.Surface.DrawSurfaceOver(_floating, item.X, item.Y);
+        SetSelectionToFloatRect();
+        Context.InvalidateDocument(item.Bounds.Intersect(doc.Bounds));
+        Context.NotifySelectionChanged();
+        Context.SetStatus("Pasteboard item picked up. Drag it onto the canvas, or move it elsewhere on the pasteboard.");
     }
 
     /// <summary>Starts an immediately movable paste while retaining source
@@ -461,6 +591,10 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         _rotationRadians = 0;
         _externalFloat = true;
         _hasMoved = false;
+        _originatedFromPasteboard = false;
+        _floatingName = "Pasted image";
+        _pasteboardSnapshot = ws.Document.PasteboardItems.ToList();
+        UpdateFloatingBitmap();
         SetSelectionToFloatRect();
         _selectionSnapshot = ws.Document.Selection.SnapshotMask();
         Context.NotifySelectionChanged();
@@ -469,7 +603,13 @@ public sealed class MoveSelectedPixelsTool : ToolBase
 
     public override void OnPointerMove(ToolPointerEventArgs e)
     {
-        if (_floating == null || Context.Workspace == null) return;
+        if (Context.Workspace == null) return;
+        if (_floating == null)
+        {
+            if (HitTestPasteboard(Context.Workspace.Document, e.X, e.Y) != null)
+                Context.SetCursorHint(Cursors.SizeAll);
+            return;
+        }
         if (!_dragging)
         {
             if (_externalFloat && HitRotationHandle(e.X, e.Y))
@@ -608,6 +748,7 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         var layer = Context.Workspace.Document.FindLayer(_layerId);
         if (layer == null) return;
         _floating = transformed;
+        UpdateFloatingBitmap();
         _floatSourceRect = newRect;
         _offsetX = _offsetY = 0;
         _hasMoved = true;
@@ -753,11 +894,28 @@ public sealed class MoveSelectedPixelsTool : ToolBase
 
     public override void OnRenderOverlay(DrawingContext dc, CanvasTransform transform)
     {
-        if (!_externalFloat || _floating == null) return;
+        if (_floating == null) return;
         var r = FloatRect();
         var tl = transform.DocToView(r.Left, r.Top);
         var br = transform.DocToView(r.Right, r.Bottom);
         var outline = new Rect(tl, br);
+
+        // The in-canvas portion is already previewed on the target layer. Draw
+        // only the portion beyond the artboard here so dragged pixels remain
+        // visible instead of being clipped at the document edge.
+        if (_floatingBitmap != null && Context.Workspace is { } ws)
+        {
+            var docTl = transform.DocToView(0, 0);
+            var docBr = transform.DocToView(ws.Document.Width, ws.Document.Height);
+            var outsideCanvas = new CombinedGeometry(GeometryCombineMode.Exclude,
+                new RectangleGeometry(new Rect(-1_000_000, -1_000_000, 2_000_000, 2_000_000)),
+                new RectangleGeometry(new Rect(docTl, docBr)));
+            dc.PushClip(outsideCanvas);
+            dc.DrawImage(_floatingBitmap, outline);
+            dc.Pop();
+        }
+
+        if (!_externalFloat) return;
         var border = new Pen(Brushes.DodgerBlue, 1.25);
         border.Freeze();
         dc.DrawRectangle(null, border, outline);
@@ -768,6 +926,12 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         var topCenter = new Point((tl.X + br.X) / 2, tl.Y);
         dc.DrawLine(border, topCenter, rotate);
         dc.DrawEllipse(Brushes.White, border, rotate, 5, 5);
+    }
+
+    private void UpdateFloatingBitmap()
+    {
+        _floatingBitmap = _floating == null ? null : Artista.Core.IO.ImageCodec.ToBitmapSource(_floating);
+        _floatingBitmap?.Freeze();
     }
 
     private void SyncSelectionToFloat()
@@ -829,19 +993,64 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         var ws = Context.Workspace;
         if (_floating == null || ws == null) return;
         var layer = ws.Document.FindLayer(_layerId);
+
+        // Merely picking up a parked piece and switching tools should not
+        // consume it or create a no-op history entry.
+        if (_originatedFromPasteboard && !_hasMoved)
+        {
+            if (layer != null && _layerSnapshot != null)
+                layer.Surface.CopyFrom(_layerSnapshot);
+            RestorePasteboardSnapshot(ws.Document);
+            if (_selectionSnapshot != null)
+                ws.Document.Selection.RestoreMask(_selectionSnapshot);
+            Context.InvalidateDocument(ws.Document.Bounds);
+            ResetFloat();
+            Context.NotifySelectionChanged();
+            return;
+        }
+
         if (_hasMoved && layer != null && _layerSnapshot != null && _selectionSnapshot != null)
         {
-            // Layer pixels already reflect the final state; build one history step
-            // covering the whole affected area plus the selection change.
-            var affected = _operationStartRect.Union(FloatRect()).Intersect(ws.Document.Bounds);
-            var beforePixels = _layerSnapshot.ExtractRect(affected);
-            var mementos = new List<HistoryMemento>
+            var finalRect = FloatRect();
+            // A partial edge crossing is still an ordinary canvas move. Only
+            // a piece moved wholly onto the gray surround becomes a pasteboard
+            // item; otherwise Enter would make an edge-aligned sprite sheet
+            // appear to vanish behind the artboard.
+            bool parkOutsideCanvas = IsCompletelyOutsideCanvas(finalRect, ws.Document);
+            var affected = _operationStartRect.Union(finalRect).Intersect(ws.Document.Bounds);
+            var mementos = new List<HistoryMemento>();
+            if (!affected.IsEmpty)
             {
-                new SurfaceRegionMemento(Name, layer, affected, beforePixels),
-                new SelectionMemento(Name, _selectionSnapshot),
-            };
-            Context.PushHistory(new CompositeMemento("Move Selected Pixels", mementos), IconKey);
+                var beforePixels = _layerSnapshot.ExtractRect(affected);
+                mementos.Add(new SurfaceRegionMemento(Name, layer, affected, beforePixels));
+            }
+            mementos.Add(new SelectionMemento(Name, _selectionSnapshot));
+
+            string historyName = "Move Selected Pixels";
+            if (parkOutsideCanvas)
+            {
+                // Remove the clipped preview from the target layer, then retain
+                // the complete source as a persistent pasteboard item.
+                RestoreClearedRegion(layer, finalRect.Intersect(ws.Document.Bounds));
+                if (_pasteboardSnapshot != null)
+                    mementos.Add(new PasteboardStateMemento(Name, _pasteboardSnapshot));
+                ws.Document.PasteboardItems.Add(
+                    new PasteboardItem(_floating, finalRect.Left, finalRect.Top, _floatingName));
+                ws.Document.Selection.Clear();
+                historyName = _originatedFromPasteboard ? "Move Pasteboard Item" : "Move to Pasteboard";
+                Context.SetStatus("Piece parked on the pasteboard. Use Move Selected Pixels to pick it up later.");
+            }
+            else if (_originatedFromPasteboard)
+            {
+                if (_pasteboardSnapshot != null)
+                    mementos.Add(new PasteboardStateMemento(Name, _pasteboardSnapshot));
+                historyName = "Place Pasteboard Item";
+                Context.SetStatus("Pasteboard piece placed onto the active layer.");
+            }
+
+            Context.PushHistory(new CompositeMemento(historyName, mementos), IconKey);
             ws.MarkDirty();
+            Context.InvalidateDocument(affected);
         }
         ResetFloat();
         Context.NotifySelectionChanged();
@@ -859,13 +1068,25 @@ public sealed class MoveSelectedPixelsTool : ToolBase
                 ws.Document.Selection.RestoreMask(_selectionSnapshot);
             Context.InvalidateDocument(ws.Document.Bounds);
         }
+        RestorePasteboardSnapshot(ws.Document);
         ResetFloat();
         Context.NotifySelectionChanged();
+    }
+
+    private static bool IsCompletelyOutsideCanvas(RectInt rect, Document doc) =>
+        rect.Intersect(doc.Bounds).IsEmpty;
+
+    private void RestorePasteboardSnapshot(Document doc)
+    {
+        if (_pasteboardSnapshot == null) return;
+        doc.PasteboardItems.Clear();
+        doc.PasteboardItems.AddRange(_pasteboardSnapshot);
     }
 
     private void ResetFloat()
     {
         _floating = null;
+        _floatingBitmap = null;
         _layerSnapshot = null;
         _externalBaseSnapshot = null;
         _selectionSnapshot = null;
@@ -879,5 +1100,8 @@ public sealed class MoveSelectedPixelsTool : ToolBase
         _rotating = false;
         _externalFloat = false;
         _hasMoved = false;
+        _originatedFromPasteboard = false;
+        _floatingName = "Pasteboard item";
+        _pasteboardSnapshot = null;
     }
 }

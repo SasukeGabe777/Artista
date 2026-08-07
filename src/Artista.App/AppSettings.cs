@@ -30,6 +30,9 @@ public sealed class AppSettings
     public List<string> RecentFiles { get; set; } = new();
     public List<uint> Palette { get; set; } = new();
     public bool ShowPixelGrid { get; set; } = true;
+    public bool ShowSpriteGrid { get; set; }
+    public int SpriteGridCellWidth { get; set; } = 32;
+    public int SpriteGridCellHeight { get; set; } = 32;
     public bool ShowRulers { get; set; }
     public int JpegQuality { get; set; } = 92;
     public Dictionary<string, PanelState> Panels { get; set; } = new();

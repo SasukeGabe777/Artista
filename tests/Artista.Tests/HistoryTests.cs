@@ -229,4 +229,26 @@ public class HistoryTests
         Assert.Equal(0xFFFF0000u, layer.Surface[0, 0]);
         Assert.Equal(42, layer.Opacity);
     }
+
+    [Fact]
+    public void PasteboardStateUndoRedoRestoresParkedPieces()
+    {
+        var doc = MakeDoc();
+        var history = new HistoryStack(doc);
+        var first = new PasteboardItem(new Surface(2, 3), -10, 4, "First");
+        doc.PasteboardItems.Add(first);
+        var before = new PasteboardStateMemento("Move Pasteboard Item", doc);
+
+        doc.PasteboardItems.Clear();
+        doc.PasteboardItems.Add(first.MovedTo(20, -8));
+        history.Push(before);
+
+        history.Undo();
+        var undone = Assert.Single(doc.PasteboardItems);
+        Assert.Equal((-10, 4), (undone.X, undone.Y));
+
+        history.Redo();
+        var redone = Assert.Single(doc.PasteboardItems);
+        Assert.Equal((20, -8), (redone.X, redone.Y));
+    }
 }

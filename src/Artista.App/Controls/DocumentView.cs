@@ -198,8 +198,14 @@ public sealed class DocumentView : Grid
         double xEdgeB = viewW - imgW;
         double yEdgeA = 0;
         double yEdgeB = viewH - imgH;
-        Canvas.OffsetX = Math.Clamp(Canvas.OffsetX, Math.Min(xEdgeA, xEdgeB), Math.Max(xEdgeA, xEdgeB));
-        Canvas.OffsetY = Math.Clamp(Canvas.OffsetY, Math.Min(yEdgeA, yEdgeB), Math.Max(yEdgeA, yEdgeB));
+        bool needsPasteboardRoom = Workspace.Document.PasteboardItems.Count > 0 ||
+            Canvas.ActiveTool is MoveSelectedPixelsTool { IsFloating: true };
+        double extraX = needsPasteboardRoom ? Math.Max(viewW * 0.65, 1024 * Zoom) : 0;
+        double extraY = needsPasteboardRoom ? Math.Max(viewH * 0.65, 1024 * Zoom) : 0;
+        Canvas.OffsetX = Math.Clamp(Canvas.OffsetX,
+            Math.Min(xEdgeA, xEdgeB) - extraX, Math.Max(xEdgeA, xEdgeB) + extraX);
+        Canvas.OffsetY = Math.Clamp(Canvas.OffsetY,
+            Math.Min(yEdgeA, yEdgeB) - extraY, Math.Max(yEdgeA, yEdgeB) + extraY);
     }
 
     private void AfterViewChanged(bool zoomChanged)

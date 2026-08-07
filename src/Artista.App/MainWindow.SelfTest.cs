@@ -337,6 +337,21 @@ public sealed partial class MainWindow
         _environment.FontSize = 32;
         _environment.PrimaryColor = Core.Imaging.ColorBgra.Pack(0, 128, 0, 255);
         text.OnPointerDown(Pt(40, 40));
+        if (PresentationSource.FromVisual(this) is { } inputSource)
+        {
+            var typedE = new KeyEventArgs(Keyboard.PrimaryDevice, inputSource,
+                Environment.TickCount, Key.E)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent,
+            };
+            OnGlobalKeyDown(this, typedE);
+            Check(ReferenceEquals(_activeTool, text) && text.IsEditing,
+                "typing a tool-shortcut letter while editing text keeps the Text tool active");
+        }
+        else
+        {
+            Fail("text shortcut routing test could not obtain a presentation source");
+        }
         text.OnTextInput("Hi");
         text.OnCommit();
         await PumpAsync();
@@ -379,7 +394,12 @@ public sealed partial class MainWindow
                 "Ctrl+C crops active-layer content instead of selecting the entire canvas");
             _layersPanel.SelectLayer(pasteTarget.Id);
             int copyPasteLayerCount = _active.Document.Layers.Count;
-            EditPaste();
+            if (croppedCopy == null)
+                throw new InvalidOperationException("Clipboard image could not be decoded after a successful copy.");
+            // Use the already-decoded clipboard payload so another desktop
+            // application cannot replace the shared clipboard between this
+            // assertion and the paste-targeting checks below.
+            PasteSurface(croppedCopy, expandCanvas: false);
             var layerPasteMove = (MoveSelectedPixelsTool)_activeTool!;
             Check(_active.Document.Layers.Count == copyPasteLayerCount &&
                   _active.Document.ActiveLayer.Id == pasteTarget.Id,
@@ -596,12 +616,180 @@ public sealed partial class MainWindow
         CommitFromEnter();
         Check(_active.Document.Selection.IsEmpty, "Enter commits and deselects Rectangle Select");
 
-        // 21g. Floating panels can dock on every supported canvas edge.
+        // 21g. Move Selected Pixels can park reusable pieces beyond the canvas
+        // and later place them back onto the active layer.
+        CreateDocument(120, 90, "Transparent");
+        await PumpAsync();
+        var pasteboardLayer = _active!.Document.ActiveLayer;
+        uint pasteboardColor = Core.Imaging.ColorBgra.Pack(40, 180, 240, 255);
+        pasteboardLayer.Surface.FillRect(new RectInt(8, 8, 12, 10), pasteboardColor);
+        _active.InvalidateComposite(_active.Document.Bounds);
+        _active.Document.Selection.Combine(
+            Core.Selections.SelectionRasterizer.RasterizeRectangle(120, 90, 8, 8, 20, 18),
+            Core.Selections.SelectionCombineMode.Replace);
+        var pasteboardMove = Tool<MoveSelectedPixelsTool>();
+
+        // Crossing an edge slightly must commit the visible pixels to the
+        // layer. It should not silently park the whole image behind the canvas.
+        DragTool(pasteboardMove, 12, 12, 2, 12);
+        CommitFromEnter();
+        Check(_active.Document.PasteboardItems.Count == 0 &&
+              pasteboardLayer.Surface[0, 10] == pasteboardColor,
+            "Enter keeps a partially off-canvas moved image visible on its layer");
+        Undo();
+
+        DragTool(pasteboardMove, 12, 12, -28, 12);
+        pasteboardMove.CommitAndDeselect();
+        var parkedPiece = _active.Document.PasteboardItems.Count == 1
+            ? _active.Document.PasteboardItems[0]
+            : null;
+        Check(parkedPiece != null && parkedPiece.X < 0,
+            "dragging selected pixels beyond the canvas parks the complete piece off-canvas");
+        Check(Core.Imaging.ColorBgra.A(pasteboardLayer.Surface[10, 10]) == 0,
+            "parking a piece clears its original layer pixels");
+        Check(_active.Document.Flatten()[10, 10] == 0,
+            "parked pasteboard pieces are excluded from flattened image export");
+        await PumpAsync();
+        Snapshot("21-pasteboard-piece");
+
+        if (parkedPiece != null)
+        {
+            DragTool(pasteboardMove, parkedPiece.X + 2, parkedPiece.Y + 2, 40, 30);
+            pasteboardMove.CommitAndDeselect();
+            Check(_active.Document.PasteboardItems.Count == 0 &&
+                  pasteboardLayer.Surface[39, 29] == pasteboardColor,
+                "a parked pasteboard piece can be picked up and placed back on a layer");
+            Undo();
+            Check(_active.Document.PasteboardItems.Count == 1,
+                "undo returns a placed piece to the pasteboard");
+            Redo();
+            Check(_active.Document.PasteboardItems.Count == 0,
+                "redo places the pasteboard piece back onto the layer");
+        }
+        CloseWorkspace(_active);
+        await PumpAsync();
+
+        // 21h. Sprite Preview turns parked sprite pieces into an ordered,
+        // playable Sprite Canvas and exports a multi-frame GIF.
+        CreateDocument(32, 32, "Transparent");
+        await PumpAsync();
+        uint[] spriteColors =
+        {
+            Core.Imaging.ColorBgra.Pack(30, 80, 230, 255),
+            Core.Imaging.ColorBgra.Pack(50, 210, 80, 255),
+            Core.Imaging.ColorBgra.Pack(210, 70, 60, 255),
+        };
+        for (int i = 0; i < spriteColors.Length; i++)
+        {
+            var frameSurface = new Surface(8, 8);
+            frameSurface.FillRect(new RectInt(1, 1, 6, 6), spriteColors[i]);
+            _active!.Document.PasteboardItems.Add(
+                new Core.Documents.PasteboardItem(frameSurface, -36 + i * 12, 5, $"Frame {i + 1}"));
+        }
+        var spritePreviewTool = Tool<SpritePreviewTool>();
+        await PumpAsync(100);
+        var spriteCanvas = LastSpritePreviewWindow;
+        Check(spriteCanvas is { IsVisible: true, FrameCount: 3 },
+            "Sprite Preview opens a Sprite Canvas from ordered pasteboard frames");
+        if (spriteCanvas != null)
+        {
+            int frameBeforeAdvance = spriteCanvas.CurrentFrameIndex;
+            spriteCanvas.AdvanceFrameForTest();
+            Check(spriteCanvas.CurrentFrameIndex != frameBeforeAdvance,
+                "Sprite Canvas playback advances through animation frames");
+            string spriteGif = tempFile("sprite-preview.gif");
+            spriteCanvas.SaveGif(spriteGif);
+            using var gifStream = new FileStream(spriteGif, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var gifDecoder = new GifBitmapDecoder(gifStream,
+                BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+            Check(gifDecoder.Frames.Count == 3,
+                "Sprite Canvas exports all frames as an animated GIF");
+            spriteCanvas.LoadGif(spriteGif);
+            Check(spriteCanvas.FrameCount == 3,
+                "Sprite Canvas opens every frame from an animated GIF");
+            SnapshotVisual(spriteCanvas, "22-sprite-canvas");
+            spriteCanvas.Close();
+        }
+
+        // A user commonly moves the entire strip off-canvas in one drag. That
+        // produces one pasteboard item, which Sprite Preview must split rather
+        // than silently treating as insufficient input. Raise the real toolbar
+        // click event here so this also covers the reported interaction path.
+        _active!.Document.PasteboardItems.Clear();
+        var parkedStrip = new Surface(24, 8);
+        for (int i = 0; i < spriteColors.Length; i++)
+            parkedStrip.FillRect(new RectInt(i * 8 + 1, 1, 6, 6), spriteColors[i]);
+        _active.Document.PasteboardItems.Add(
+            new Core.Documents.PasteboardItem(parkedStrip, -36, 5, "Parked sprite strip"));
+        var spritePreviewButton = _toolPalette.Children.OfType<ToggleButton>()
+            .Single(button => ReferenceEquals(button.Tag, spritePreviewTool));
+        spritePreviewButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        await PumpAsync(100);
+        var parkedStripCanvas = LastSpritePreviewWindow;
+        Check(parkedStripCanvas is { IsVisible: true, FrameCount: 3 },
+            "Sprite Preview toolbar click splits one parked sprite strip into frames");
+        parkedStripCanvas?.Close();
+
+        _active!.Document.PasteboardItems.Clear();
+        _active.Document.ActiveLayer.Surface.Clear();
+        for (int i = 0; i < spriteColors.Length; i++)
+            _active.Document.ActiveLayer.Surface.FillRect(new RectInt(2 + i * 10, 2, 6, 6), spriteColors[i]);
+        _active.InvalidateComposite(_active.Document.Bounds);
+        _active.Document.Selection.Combine(
+            Core.Selections.SelectionRasterizer.RasterizeRectangle(32, 32, 2, 2, 8, 8),
+            Core.Selections.SelectionCombineMode.Replace);
+        _active.Document.Selection.Combine(
+            Core.Selections.SelectionRasterizer.RasterizeRectangle(32, 32, 12, 2, 18, 8),
+            Core.Selections.SelectionCombineMode.Add);
+        _active.Document.Selection.Combine(
+            Core.Selections.SelectionRasterizer.RasterizeRectangle(32, 32, 22, 2, 28, 8),
+            Core.Selections.SelectionCombineMode.Add);
+        _ = Tool<SpritePreviewTool>();
+        await PumpAsync(100);
+        var selectedRegionsCanvas = LastSpritePreviewWindow;
+        Check(selectedRegionsCanvas is { IsVisible: true, FrameCount: 3 },
+            "Sprite Preview converts separately selected sprite-sheet regions into frames");
+        selectedRegionsCanvas?.Close();
+
+        // Sprite Grid turns an imprecise rectangle gesture into complete frame
+        // cells, and adjacent cells must remain separate preview frames.
+        _active.Document.Selection.Clear();
+        _documentView.Canvas.ShowSpriteGrid = true;
+        _documentView.Canvas.SpriteGridCellWidth = 8;
+        _documentView.Canvas.SpriteGridCellHeight = 8;
+        var gridRectSelect = Tool<RectangleSelectTool>();
+        gridRectSelect.OnPointerDown(Pt(1.2, 1.4));
+        gridRectSelect.OnPointerMove(Pt(14.7, 6.1));
+        gridRectSelect.OnPointerUp(Pt(14.7, 6.1));
+        Check(_active.Document.Selection.Bounds == new RectInt(0, 0, 16, 8),
+            "Sprite Grid snaps Rectangle Select to complete frame cells");
+        var snappedGridFrames = CollectSpriteFrames(
+            _active, new Core.Selections.SpriteGridLayout(8, 8));
+        Check(snappedGridFrames.Count == 2 &&
+              snappedGridFrames.All(frame => frame.Surface.Width == 8 && frame.Surface.Height == 8),
+            "Sprite Preview keeps adjacent selected Sprite Grid cells as separate equal frames");
+        _documentView.Canvas.ShowSpriteGrid = false;
+
+        CloseWorkspace(_active!);
+        await PumpAsync();
+
+        // 21i. Floating panels can dock on every supported canvas edge.
         var historySite = _panelSites.First(s => s.Name == "history");
         var toolsSite = _panelSites.First(s => s.Name == "tools");
+        var colorsSite = _panelSites.First(s => s.Name == "colors");
+        FloatSite(colorsSite);
+        await PumpAsync();
+        var colorControls = VisualDescendants(_colorsPanel).ToList();
+        Check(colorControls.OfType<Slider>().Any(s =>
+                Equals(s.ToolTip, "Transparency / alpha (0 = fully transparent, 255 = fully opaque)")),
+            "Colors panel keeps the alpha/transparency slider on its main screen");
+        Check(colorControls.OfType<Border>().Any(b => Equals(b.ToolTip, "Fully transparent")),
+            "Colors panel keeps a fixed fully-transparent palette swatch");
+        if (colorsSite.Window != null)
+            SnapshotVisual(colorsSite.Window, "20-floating-colors");
         FloatSite(toolsSite);
         await PumpAsync();
-        Check(toolsSite.Window is { IsVisible: true } && _toolPalette.Children.Count == 24,
+        Check(toolsSite.Window is { IsVisible: true } && _toolPalette.Children.Count == 25,
             "familiar two-column Tools palette floats as a real panel");
         Check(_toolPalette.Children.OfType<ToggleButton>().All(b => b.Width == 42 && b.Height == 38),
             "Tools palette uses larger Paint.NET-style hit targets");
@@ -619,7 +807,7 @@ public sealed partial class MainWindow
         }
         DockSite(toolsSite, Panels.PanelDockEdge.Top);
         await PumpAsync();
-        Check(toolsSite.State.Docked && _toolPalette.Columns == 12,
+        Check(toolsSite.State.Docked && _toolPalette.Columns == 13,
             "Tools palette reflows horizontally when docked above the canvas");
         FloatSite(toolsSite);
         await PumpAsync();
@@ -734,6 +922,17 @@ public sealed partial class MainWindow
         catch (Exception ex)
         {
             _testLog.Add($"WARN  visual snapshot {name} failed: {ex.Message}");
+        }
+    }
+
+    private static IEnumerable<DependencyObject> VisualDescendants(DependencyObject root)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            yield return child;
+            foreach (var descendant in VisualDescendants(child))
+                yield return descendant;
         }
     }
 }

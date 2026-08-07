@@ -29,7 +29,7 @@ Artista.slnx
 │   │                     ToolEnvironment (shared tool settings, ~ Paint.NET's AppEnvironment)
 │   ├── Controls/         CanvasView (render: checkerboard/bitmap/grid/ants/overlay),
 │   │                     DocumentView (zoom/pan/scrollbars/rulers/input routing)
-│   ├── Tools/            ToolBase + IToolContext, ToolRegistry, all 24 tools
+│   ├── Tools/            ToolBase + IToolContext, ToolRegistry, all 25 tools
 │   ├── Panels/           ColorsPanel (+ ColorWheel), LayersPanel, HistoryPanel, IShellHost
 │   ├── Dialogs/          DialogBase, document dialogs, EffectDialog (auto-generated, live preview),
 │   │                     CurveEditor, ProgressDialog

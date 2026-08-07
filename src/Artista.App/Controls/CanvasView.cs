@@ -4,6 +4,7 @@ using System.Windows.Threading;
 using Artista.App.Models;
 using Artista.App.Tools;
 using Artista.Core.Imaging;
+using Artista.Core.Selections;
 
 namespace Artista.App.Controls;
 
@@ -21,6 +22,9 @@ public sealed class CanvasView : FrameworkElement
     public double OffsetX { get; set; }
     public double OffsetY { get; set; }
     public bool ShowPixelGrid { get; set; } = true;
+    public bool ShowSpriteGrid { get; set; }
+    public int SpriteGridCellWidth { get; set; } = 32;
+    public int SpriteGridCellHeight { get; set; } = 32;
 
     private readonly DispatcherTimer _antsTimer;
     private double _antsOffset;
@@ -75,6 +79,12 @@ public sealed class CanvasView : FrameworkElement
         int docW = ws.Document.Width, docH = ws.Document.Height;
         var docRectView = new Rect(OffsetX, OffsetY, docW * Zoom, docH * Zoom);
 
+        // Reusable pieces live on the gray pasteboard behind the artboard.
+        // Drawing them first keeps the document boundary visually unambiguous:
+        // a parked item does not become part of the image until it is picked up
+        // and placed back onto a layer.
+        DrawPasteboardItems(dc, ws);
+
         // Drop shadow edge around the canvas.
         dc.DrawRectangle(null, new Pen(new SolidColorBrush(Color.FromArgb(60, 0, 0, 0)), 3),
             Rect.Inflate(docRectView, 1.5, 1.5));
@@ -98,6 +108,31 @@ public sealed class CanvasView : FrameworkElement
 
         // Tool overlay.
         ActiveTool?.OnRenderOverlay(dc, Transform);
+
+        // Keep the alignment guide above floating pixels and every tool
+        // preview. This is deliberately last so a moved sprite sheet can never
+        // obscure the frame boundaries used to position it.
+        if (ShowSpriteGrid)
+            DrawSpriteGrid(dc, docW, docH);
+    }
+
+    private void DrawPasteboardItems(DrawingContext dc, DocumentWorkspace ws)
+    {
+        if (ws.Document.PasteboardItems.Count == 0) return;
+        RenderOptions.SetBitmapScalingMode(this,
+            Zoom >= 1.0 ? BitmapScalingMode.NearestNeighbor : BitmapScalingMode.HighQuality);
+        var outline = new Pen(new SolidColorBrush(Color.FromArgb(115, 220, 225, 235)), 1);
+        outline.Freeze();
+        var shadow = new SolidColorBrush(Color.FromArgb(55, 0, 0, 0));
+        shadow.Freeze();
+        foreach (var item in ws.Document.PasteboardItems)
+        {
+            var tl = DocToView(new Point(item.X, item.Y));
+            var rect = new Rect(tl.X, tl.Y, item.Surface.Width * Zoom, item.Surface.Height * Zoom);
+            dc.DrawRectangle(shadow, null, new Rect(rect.X + 3, rect.Y + 3, rect.Width, rect.Height));
+            dc.DrawImage(ws.GetPasteboardBitmap(item), rect);
+            dc.DrawRectangle(null, outline, rect);
+        }
     }
 
     private Brush GetCheckerBrush()
@@ -139,6 +174,33 @@ public sealed class CanvasView : FrameworkElement
             double vy = Math.Round(y * Zoom + OffsetY) + 0.5;
             dc.DrawLine(pen, new Point(left, vy), new Point(right, vy));
         }
+    }
+
+    private void DrawSpriteGrid(DrawingContext dc, int docW, int docH)
+    {
+        var layout = new SpriteGridLayout(SpriteGridCellWidth, SpriteGridCellHeight);
+        int columns = layout.Columns(docW), rows = layout.Rows(docH);
+        if (columns == 0 || rows == 0) return;
+
+        var pen = new Pen(new SolidColorBrush(Color.FromArgb(225, 235, 45, 55)), 1.25);
+        pen.Freeze();
+        double left = OffsetX;
+        double top = OffsetY;
+        double right = OffsetX + columns * SpriteGridCellWidth * Zoom;
+        double bottom = OffsetY + rows * SpriteGridCellHeight * Zoom;
+
+        dc.PushClip(new RectangleGeometry(new Rect(OffsetX, OffsetY, docW * Zoom, docH * Zoom)));
+        for (int column = 0; column <= columns; column++)
+        {
+            double x = Math.Round(OffsetX + column * SpriteGridCellWidth * Zoom) + 0.5;
+            dc.DrawLine(pen, new Point(x, top), new Point(x, bottom));
+        }
+        for (int row = 0; row <= rows; row++)
+        {
+            double y = Math.Round(OffsetY + row * SpriteGridCellHeight * Zoom) + 0.5;
+            dc.DrawLine(pen, new Point(left, y), new Point(right, y));
+        }
+        dc.Pop();
     }
 
     private void DrawSelection(DrawingContext dc, DocumentWorkspace ws)

@@ -4,6 +4,7 @@ using System.Windows.Media.Imaging;
 using Artista.Core.Documents;
 using Artista.Core.History;
 using Artista.Core.Imaging;
+using Artista.Core.IO;
 using Artista.Core.Rendering;
 
 namespace Artista.App.Models;
@@ -33,6 +34,8 @@ public sealed class DocumentWorkspace
     public Surface CompositeSurface { get; private set; }
 
     public WriteableBitmap CompositeBitmap { get; private set; }
+
+    private readonly Dictionary<int, (Surface Surface, BitmapSource Bitmap)> _pasteboardBitmaps = new();
 
     /// <summary>Optional preview substitution: this surface replaces the layer's during compositing.</summary>
     public int PreviewLayerId { get; private set; } = -1;
@@ -90,6 +93,17 @@ public sealed class DocumentWorkspace
         PreviewSurface = surface;
     }
 
+    public BitmapSource GetPasteboardBitmap(PasteboardItem item)
+    {
+        if (_pasteboardBitmaps.TryGetValue(item.Id, out var cached) &&
+            ReferenceEquals(cached.Surface, item.Surface))
+            return cached.Bitmap;
+        var bitmap = ImageCodec.ToBitmapSource(item.Surface);
+        bitmap.Freeze();
+        _pasteboardBitmaps[item.Id] = (item.Surface, bitmap);
+        return bitmap;
+    }
+
     /// <summary>
     /// Recomposites the given region and pushes it into the WriteableBitmap.
     /// Must be called on the UI thread (WriteableBitmap requirement).
@@ -137,6 +151,7 @@ public sealed class DocumentWorkspace
 
     public void NotifyStructureChanged()
     {
+        _pasteboardBitmaps.Clear();
         StructureChanged?.Invoke(this, EventArgs.Empty);
         InvalidateComposite(Document.Bounds);
     }

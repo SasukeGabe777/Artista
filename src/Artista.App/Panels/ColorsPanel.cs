@@ -95,6 +95,15 @@ public sealed class ColorsPanel : StackPanel
         hexRow.Children.Add(_hex);
         Children.Add(hexRow);
 
+        // Alpha is a primary color control, so keep it visible without
+        // requiring the expanded "More" view. Zero is fully transparent and
+        // 255 is fully opaque.
+        var alphaRow = SliderRow("Alpha:", _a, 0, 255, OnRgbSlider, out var ab, 42);
+        alphaRow.Margin = new Thickness(0, 5, 0, 1);
+        _a.ToolTip = "Transparency / alpha (0 = fully transparent, 255 = fully opaque)";
+        _aBoxRef = ab;
+        Children.Add(alphaRow);
+
         // --- sliders (collapsed by default, Paint.NET's "More/Less") ---
         var sliders = new StackPanel { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 4, 0, 0) };
         sliders.Children.Add(SliderRow("H:", _h, 0, 360, OnHsvSlider, out _));
@@ -103,7 +112,6 @@ public sealed class ColorsPanel : StackPanel
         sliders.Children.Add(SliderRow("R:", _r, 0, 255, OnRgbSlider, out var rb)); _rBoxRef = rb;
         sliders.Children.Add(SliderRow("G:", _g, 0, 255, OnRgbSlider, out var gb)); _gBoxRef = gb;
         sliders.Children.Add(SliderRow("B:", _b, 0, 255, OnRgbSlider, out var bb)); _bBoxRef = bb;
-        sliders.Children.Add(SliderRow("A:", _a, 0, 255, OnRgbSlider, out var ab)); _aBoxRef = ab;
         Children.Add(sliders);
         moreButton.Click += (_, _) =>
         {
@@ -170,10 +178,10 @@ public sealed class ColorsPanel : StackPanel
     }
 
     private DockPanel SliderRow(string label, Slider slider, double min, double max,
-        RoutedPropertyChangedEventHandler<double> onChange, out TextBox box)
+        RoutedPropertyChangedEventHandler<double> onChange, out TextBox box, double labelWidth = 20)
     {
         var row = new DockPanel { Margin = new Thickness(0, 1, 0, 1) };
-        var text = new TextBlock { Text = label, Width = 20, VerticalAlignment = VerticalAlignment.Center };
+        var text = new TextBlock { Text = label, Width = labelWidth, VerticalAlignment = VerticalAlignment.Center };
         box = new TextBox { Width = 40, Margin = new Thickness(6, 0, 0, 0) };
         var localBox = box;
         var localSlider = slider;
@@ -295,19 +303,25 @@ public sealed class ColorsPanel : StackPanel
     private void BuildPalette()
     {
         _palettePanel.Children.Clear();
+        // This swatch is fixed rather than user-palette data so there is always
+        // a one-click route back to full transparency.
+        _palettePanel.Children.Add(MakePaletteSwatch(0x00000000, "Fully transparent"));
         var colors = _host.Settings.Palette.Count > 0 ? _host.Settings.Palette : DefaultPalette.ToList();
         foreach (uint c in colors)
-            _palettePanel.Children.Add(MakePaletteSwatch(c));
+        {
+            if (ColorBgra.A(c) != 0)
+                _palettePanel.Children.Add(MakePaletteSwatch(c));
+        }
     }
 
-    private FrameworkElement MakePaletteSwatch(uint c)
+    private FrameworkElement MakePaletteSwatch(uint c, string? tooltip = null)
     {
         var border = new Border
         {
             Width = 16, Height = 16, Margin = new Thickness(1),
             Background = MakeSwatchBrush(c),
             BorderThickness = new Thickness(1),
-            ToolTip = $"#{c & 0xFFFFFF:X6}",
+            ToolTip = tooltip ?? $"#{c & 0xFFFFFF:X6}",
         };
         border.SetResourceReference(Border.BorderBrushProperty, "BorderLightBrush");
         border.MouseDown += (_, e) =>
