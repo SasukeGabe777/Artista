@@ -3,6 +3,7 @@ using System.Windows.Media;
 using Artista.App.Models;
 using Artista.Core.History;
 using Artista.Core.Imaging;
+using Artista.Core.Selections;
 
 namespace Artista.App.Tools;
 
@@ -62,6 +63,7 @@ public interface IToolContext
     bool IsSpriteGridActive { get; }
     int SpriteGridCellWidth { get; }
     int SpriteGridCellHeight { get; }
+    SpriteGridLayout SpriteGridLayout { get; }
 
     /// <summary>Refresh panels after selection/structure changes.</summary>
     void NotifySelectionChanged();

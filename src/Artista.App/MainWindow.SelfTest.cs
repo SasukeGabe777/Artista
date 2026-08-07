@@ -111,6 +111,22 @@ public sealed partial class MainWindow
         // 1. Startup state: a default document exists.
         await PumpAsync(200);
         Check(_active != null, "application started with a default document");
+
+        bool spriteGridWasVisible = _documentView.Canvas.ShowSpriteGrid;
+        var presentationSource = PresentationSource.FromVisual(this);
+        if (presentationSource != null)
+        {
+            var f1 = new KeyEventArgs(Keyboard.PrimaryDevice, presentationSource,
+                Environment.TickCount, Key.F1)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent,
+            };
+            OnGlobalKeyDown(this, f1);
+            Check(_documentView.Canvas.ShowSpriteGrid != spriteGridWasVisible &&
+                  _spriteGridMenuItem.IsChecked == _documentView.Canvas.ShowSpriteGrid,
+                "F1 toggles the existing Sprite Grid state and synchronizes its menu check");
+            SetSpriteGridVisible(spriteGridWasVisible);
+        }
         Check(WindowStyle == WindowStyle.SingleBorderWindow && ResizeMode == ResizeMode.CanResize,
             "startup window exposes the standard minimize, maximize, and close controls");
         Check(Top >= SystemParameters.WorkArea.Top && Left >= SystemParameters.WorkArea.Left,
@@ -586,6 +602,7 @@ public sealed partial class MainWindow
         wand2.OnPointerDown(Pt(10, 10));
         await PumpAsync();
         Check(!_active!.Document.Selection.IsEmpty, "wand selection exists before click-deselect");
+        _documentView.Canvas.ShowSpriteGrid = false;
         var rectSel2 = Tool<RectangleSelectTool>();
         rectSel2.OnPointerDown(Pt(50, 50));
         rectSel2.OnPointerUp(Pt(50, 50));
@@ -673,6 +690,10 @@ public sealed partial class MainWindow
         // playable Sprite Canvas and exports a multi-frame GIF.
         CreateDocument(32, 32, "Transparent");
         await PumpAsync();
+        // Component-selection coverage below intentionally exercises the
+        // legacy non-grid Sprite Preview path regardless of persisted user UI
+        // settings. The dedicated grid path is enabled explicitly afterward.
+        _documentView.Canvas.ShowSpriteGrid = false;
         uint[] spriteColors =
         {
             Core.Imaging.ColorBgra.Pack(30, 80, 230, 255),
@@ -757,6 +778,10 @@ public sealed partial class MainWindow
         _documentView.Canvas.ShowSpriteGrid = true;
         _documentView.Canvas.SpriteGridCellWidth = 8;
         _documentView.Canvas.SpriteGridCellHeight = 8;
+        _documentView.Canvas.SpriteGridOriginX = 0;
+        _documentView.Canvas.SpriteGridOriginY = 0;
+        _documentView.Canvas.SpriteGridSpacingX = 0;
+        _documentView.Canvas.SpriteGridSpacingY = 0;
         var gridRectSelect = Tool<RectangleSelectTool>();
         gridRectSelect.OnPointerDown(Pt(1.2, 1.4));
         gridRectSelect.OnPointerMove(Pt(14.7, 6.1));
@@ -768,6 +793,33 @@ public sealed partial class MainWindow
         Check(snappedGridFrames.Count == 2 &&
               snappedGridFrames.All(frame => frame.Surface.Width == 8 && frame.Surface.Height == 8),
             "Sprite Preview keeps adjacent selected Sprite Grid cells as separate equal frames");
+
+        var analysisGrid = new Core.Selections.SpriteGridLayout(8, 8);
+        var analysisSprites = Core.Selections.SpriteDetector.Detect(
+            _active.Document.ActiveLayer.Surface,
+            _active.Document.Selection,
+            new Core.Selections.SpriteDetectionOptions(
+                InspectionMargin: 4, ExpectedCellWidth: 8, ExpectedCellHeight: 8));
+        var analysisPlan = Core.Selections.SpriteGridAnalyzer.PlanAlignment(
+            _active.Document.ActiveLayer.Surface, analysisSprites, analysisGrid);
+        var analysisPreview = new Dialogs.SpriteAnalysisPreviewDialog(
+            "Sprite Analysis Preview Test",
+            _active.Document.ActiveLayer.Surface,
+            _active.Document.Selection.Bounds,
+            analysisSprites,
+            analysisGrid,
+            analysisGrid,
+            analysisPlan.Moves,
+            "Visual verification of detected sprite bounds, proposed integer moves, and topmost grid lines.")
+        {
+            Owner = this,
+        };
+        analysisPreview.Show();
+        await PumpAsync(100);
+        Check(analysisPreview.IsVisible && analysisSprites.Count >= 2,
+            "sprite analysis preview renders detected sprites and proposed grid alignment");
+        SnapshotVisual(analysisPreview, "23-sprite-analysis-preview");
+        analysisPreview.Close();
         _documentView.Canvas.ShowSpriteGrid = false;
 
         CloseWorkspace(_active!);

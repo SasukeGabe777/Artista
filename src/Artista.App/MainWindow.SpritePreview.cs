@@ -17,7 +17,7 @@ public sealed partial class MainWindow
             _active.Document.PasteboardItems.Count == 0 &&
             !_active.Document.Selection.IsEmpty;
         SpriteGridLayout? grid = useSelectedGrid
-            ? new SpriteGridLayout(SpriteGridCellWidth, SpriteGridCellHeight)
+            ? SpriteGridLayout
             : null;
         var frames = CollectSpriteFrames(_active, grid);
         if (frames.Count == 1 && !useSelectedGrid)

@@ -1,6 +1,6 @@
 # Keyboard shortcuts
 
-Also available in-app: **Help → Keyboard Shortcuts** (or **F1**).
+Also available in-app: **Help → Keyboard Shortcuts**.
 
 ## File
 | Shortcut | Action |
@@ -46,6 +46,7 @@ Also available in-app: **Help → Keyboard Shortcuts** (or **F1**).
 | Ctrl+B | Fit to window |
 | Ctrl+Shift+1 | Actual size (100%) |
 | Space+drag / middle-drag | Pan (wheel-scrolling works at the same time) |
+| F1 | Toggle Sprite Grid visibility without changing its configuration |
 | F5 / F6 / F7 / F8 | Toggle Tools / History / Layers / Colors panels |
 
 ## Tools (single keys)

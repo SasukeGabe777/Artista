@@ -9,6 +9,7 @@ using Artista.App.Panels;
 using Artista.App.Tools;
 using Artista.Core.History;
 using Artista.Core.Imaging;
+using Artista.Core.Selections;
 
 namespace Artista.App;
 
@@ -75,6 +76,10 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
         _documentView.Canvas.ShowSpriteGrid = App.Settings.ShowSpriteGrid;
         _documentView.Canvas.SpriteGridCellWidth = Math.Max(1, App.Settings.SpriteGridCellWidth);
         _documentView.Canvas.SpriteGridCellHeight = Math.Max(1, App.Settings.SpriteGridCellHeight);
+        _documentView.Canvas.SpriteGridOriginX = App.Settings.SpriteGridOriginX;
+        _documentView.Canvas.SpriteGridOriginY = App.Settings.SpriteGridOriginY;
+        _documentView.Canvas.SpriteGridSpacingX = Math.Max(0, App.Settings.SpriteGridSpacingX);
+        _documentView.Canvas.SpriteGridSpacingY = Math.Max(0, App.Settings.SpriteGridSpacingY);
         BuildToolPalette();
         RegisterShortcuts();
 
@@ -840,13 +845,13 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
     public bool IsSpriteGridActive =>
         _active != null &&
         _documentView.Canvas.ShowSpriteGrid &&
-        _documentView.Canvas.SpriteGridCellWidth > 0 &&
-        _documentView.Canvas.SpriteGridCellHeight > 0 &&
-        _documentView.Canvas.SpriteGridCellWidth <= _active.Document.Width &&
-        _documentView.Canvas.SpriteGridCellHeight <= _active.Document.Height;
+        SpriteGridLayout.IsValid &&
+        SpriteGridLayout.Columns(_active.Document.Width) > 0 &&
+        SpriteGridLayout.Rows(_active.Document.Height) > 0;
 
     public int SpriteGridCellWidth => _documentView.Canvas.SpriteGridCellWidth;
     public int SpriteGridCellHeight => _documentView.Canvas.SpriteGridCellHeight;
+    public SpriteGridLayout SpriteGridLayout => _documentView.Canvas.SpriteGridLayout;
 
     public void NotifySelectionChanged() => _documentView.Canvas.InvalidateVisual();
 
@@ -911,19 +916,27 @@ public sealed partial class MainWindow : Window, IShellHost, IToolContext
 
         // Give the active tool first refusal unless a text box has focus.
         if (e.OriginalSource is TextBox) return;
-        if (_activeTool != null)
+        // Text is edited directly on the canvas rather than in a TextBox, so
+        // it also suppresses global shortcuts such as F1 while typing.
+        if (_activeTool is TextTool { IsEditing: true } editingText)
         {
-            // While the Text tool is editing, ordinary key presses must be
-            // allowed to become PreviewTextInput events instead of falling
-            // through to the single-key tool shortcuts below (for example,
-            // typing "e" must not activate the Eraser).
-            if (_activeTool is TextTool { IsEditing: true } editingText)
+            if (e.Key == Key.F1)
             {
-                if (editingText.OnKeyDown(e.Key, Keyboard.Modifiers))
-                    e.Handled = true;
+                e.Handled = true;
                 return;
             }
-
+            if (editingText.OnKeyDown(e.Key, Keyboard.Modifiers))
+                e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.F1 && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            SetSpriteGridVisible(!_documentView.Canvas.ShowSpriteGrid);
+            e.Handled = true;
+            return;
+        }
+        if (_activeTool != null)
+        {
             if (e.Key == Key.Escape)
             {
                 CancelActiveOperationOrDeselect();

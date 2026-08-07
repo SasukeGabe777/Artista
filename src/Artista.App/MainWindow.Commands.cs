@@ -131,12 +131,17 @@ public sealed partial class MainWindow
         _spriteGridMenuItem = new MenuItem
         {
             Header = "_Show Sprite Grid",
+            InputGestureText = "F1",
             IsCheckable = true,
             IsChecked = App.Settings.ShowSpriteGrid,
         };
         _spriteGridMenuItem.Click += (_, _) => SetSpriteGridVisible(_spriteGridMenuItem.IsChecked);
         spriteGrid.Items.Add(_spriteGridMenuItem);
-        spriteGrid.Items.Add(MI("_Adjust Cell Size\u2026", null, (_, _) => ConfigureSpriteGrid()));
+        spriteGrid.Items.Add(MI("_Configure Grid\u2026", null, (_, _) => ConfigureSpriteGrid()));
+        spriteGrid.Items.Add(new Separator());
+        spriteGrid.Items.Add(MI("_Align Sprites to Grid\u2026", null, (_, _) => AlignSpritesToGrid()));
+        spriteGrid.Items.Add(MI("Align _Grid to Sprites\u2026", null, (_, _) => AlignGridToSprites()));
+        spriteGrid.Items.Add(MI("_Detect Sprite Grid\u2026", null, (_, _) => DetectSpriteGrid()));
         view.Items.Add(spriteGrid);
         _rulersMenuItem = new MenuItem { Header = "_Rulers", IsCheckable = true, IsChecked = App.Settings.ShowRulers };
         _rulersMenuItem.Click += (_, _) =>
@@ -184,10 +189,13 @@ public sealed partial class MainWindow
     {
         App.Settings.ShowSpriteGrid = visible;
         _documentView.Canvas.ShowSpriteGrid = visible;
+        if (_spriteGridMenuItem is not null)
+            _spriteGridMenuItem.IsChecked = visible;
         App.Settings.Save();
         _documentView.Canvas.InvalidateVisual();
+        var layout = SpriteGridLayout;
         SetStatus(visible
-            ? $"Sprite Grid: {App.Settings.SpriteGridCellWidth} x {App.Settings.SpriteGridCellHeight} px. Rectangle Select now snaps to complete frames."
+            ? $"Sprite Grid: {layout.CellWidth} x {layout.CellHeight} px, origin {layout.OriginX}, {layout.OriginY}, spacing {layout.SpacingX}, {layout.SpacingY}."
             : "Sprite Grid hidden. Rectangle Select uses freehand bounds.");
     }
 
@@ -195,18 +203,15 @@ public sealed partial class MainWindow
     {
         if (_active == null) return;
         bool wasVisible = _documentView.Canvas.ShowSpriteGrid;
-        int oldWidth = _documentView.Canvas.SpriteGridCellWidth;
-        int oldHeight = _documentView.Canvas.SpriteGridCellHeight;
+        var oldLayout = SpriteGridLayout;
         var dialog = new SpriteGridDialog(
             _active.Document.Width,
             _active.Document.Height,
-            App.Settings.SpriteGridCellWidth,
-            App.Settings.SpriteGridCellHeight,
-            (width, height) =>
+            oldLayout,
+            layout =>
             {
                 _documentView.Canvas.ShowSpriteGrid = true;
-                _documentView.Canvas.SpriteGridCellWidth = width;
-                _documentView.Canvas.SpriteGridCellHeight = height;
+                SetCanvasSpriteGridLayout(layout);
                 _documentView.Canvas.InvalidateVisual();
             })
         {
@@ -215,18 +220,35 @@ public sealed partial class MainWindow
         if (dialog.ShowDialog() != true)
         {
             _documentView.Canvas.ShowSpriteGrid = wasVisible;
-            _documentView.Canvas.SpriteGridCellWidth = oldWidth;
-            _documentView.Canvas.SpriteGridCellHeight = oldHeight;
+            SetCanvasSpriteGridLayout(oldLayout);
             _documentView.Canvas.InvalidateVisual();
             return;
         }
 
-        App.Settings.SpriteGridCellWidth = dialog.CellWidth;
-        App.Settings.SpriteGridCellHeight = dialog.CellHeight;
-        _documentView.Canvas.SpriteGridCellWidth = dialog.CellWidth;
-        _documentView.Canvas.SpriteGridCellHeight = dialog.CellHeight;
-        _spriteGridMenuItem.IsChecked = true;
+        ApplySpriteGridLayout(dialog.Layout);
+    }
+
+    private void ApplySpriteGridLayout(SpriteGridLayout layout)
+    {
+        if (!layout.IsValid) return;
+        SetCanvasSpriteGridLayout(layout);
+        App.Settings.SpriteGridCellWidth = layout.CellWidth;
+        App.Settings.SpriteGridCellHeight = layout.CellHeight;
+        App.Settings.SpriteGridOriginX = layout.OriginX;
+        App.Settings.SpriteGridOriginY = layout.OriginY;
+        App.Settings.SpriteGridSpacingX = layout.SpacingX;
+        App.Settings.SpriteGridSpacingY = layout.SpacingY;
         SetSpriteGridVisible(true);
+    }
+
+    private void SetCanvasSpriteGridLayout(SpriteGridLayout layout)
+    {
+        _documentView.Canvas.SpriteGridCellWidth = layout.CellWidth;
+        _documentView.Canvas.SpriteGridCellHeight = layout.CellHeight;
+        _documentView.Canvas.SpriteGridOriginX = layout.OriginX;
+        _documentView.Canvas.SpriteGridOriginY = layout.OriginY;
+        _documentView.Canvas.SpriteGridSpacingX = layout.SpacingX;
+        _documentView.Canvas.SpriteGridSpacingY = layout.SpacingY;
     }
 
     private void SetTheme(AppTheme theme)
@@ -310,7 +332,7 @@ public sealed partial class MainWindow
     private MenuItem BuildHelpMenu()
     {
         var help = new MenuItem { Header = "_Help" };
-        help.Items.Add(MI("_Keyboard Shortcuts", "F1", (_, _) => new ShortcutsDialog { Owner = this }.ShowDialog()));
+        help.Items.Add(MI("_Keyboard Shortcuts", null, (_, _) => new ShortcutsDialog { Owner = this }.ShowDialog()));
         help.Items.Add(MI("_About Artista", null, (_, _) => MessageBox.Show(this,
             "Artista — a personal Paint.NET-style image editor.\n\n" +
             "Built on .NET " + Environment.Version + " and WPF.\n" +
@@ -403,7 +425,11 @@ public sealed partial class MainWindow
         Bind(Key.F4, ModifierKeys.None, LayerProperties);
         Bind(Key.B, ModifierKeys.Control, () => { _documentView.FitToWindow(); UpdateZoomStatus(); });
         Bind(Key.D1, ModifierKeys.Control | ModifierKeys.Shift, () => { _documentView.ActualSize(); UpdateZoomStatus(); });
-        Bind(Key.F1, ModifierKeys.None, () => new ShortcutsDialog { Owner = this }.ShowDialog());
+        Bind(Key.F1, ModifierKeys.None, () =>
+        {
+            if (Keyboard.FocusedElement is not TextBox)
+                SetSpriteGridVisible(!_documentView.Canvas.ShowSpriteGrid);
+        });
         Bind(Key.F5, ModifierKeys.None, () => TogglePanel("tools"));
         Bind(Key.F6, ModifierKeys.None, () => TogglePanel("history"));
         Bind(Key.F7, ModifierKeys.None, () => TogglePanel("layers"));
@@ -1291,7 +1317,7 @@ public sealed partial class MainWindow
     }
 }
 
-/// <summary>Keyboard shortcut reference (Help → Keyboard Shortcuts, F1).</summary>
+/// <summary>Keyboard shortcut reference (Help → Keyboard Shortcuts).</summary>
 public sealed class ShortcutsDialog : DialogBase
 {
     public ShortcutsDialog() : base("Keyboard Shortcuts")
@@ -1320,6 +1346,7 @@ public sealed class ShortcutsDialog : DialogBase
             ("+ / - or Ctrl+wheel", "Zoom in / out (cursor centered)"),
             ("Ctrl+B / Ctrl+Shift+1", "Fit to window / actual size"),
             ("Space+drag or middle-drag", "Pan the view (works while scrolling)"),
+            ("F1", "Toggle Sprite Grid visibility"),
             ("F5 / F6 / F7 / F8", "Toggle Tools / History / Layers / Colors panels"),
             ("Escape / Enter", "Cancel / commit the current operation"),
             ("X", "Swap primary and secondary colors"),
@@ -1328,7 +1355,6 @@ public sealed class ShortcutsDialog : DialogBase
             ("F / G / K / T", "Bucket / Gradient / Color picker / Text"),
             ("Q", "Color Remover brush"),
             ("H / Z", "Pan / Zoom tool"),
-            ("F1", "This reference"),
         };
         int row = 0;
         foreach (var (keys, action) in shortcuts)

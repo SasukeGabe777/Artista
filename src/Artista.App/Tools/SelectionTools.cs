@@ -133,7 +133,7 @@ public sealed class RectangleSelectTool : SelectionToolBase
         {
             var doc = Context.Workspace?.Document;
             if (doc == null) return RectInt.Empty;
-            return new SpriteGridLayout(Context.SpriteGridCellWidth, Context.SpriteGridCellHeight)
+            return Context.SpriteGridLayout
                 .SnapDrag(Start.X, Start.Y, Current.X, Current.Y, doc.Width, doc.Height);
         }
     }
@@ -148,9 +148,15 @@ public sealed class RectangleSelectTool : SelectionToolBase
     {
         if (!GridActive)
             return SelectionRasterizer.RasterizeRectangle(width, height, Start.X, Start.Y, Current.X, Current.Y);
-        var bounds = SnappedBounds;
-        return SelectionRasterizer.RasterizeRectangle(width, height,
-            bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
+        var mask = new byte[(long)width * height];
+        foreach (var cell in Context.SpriteGridLayout.CellsTouchedByDrag(
+                     Start.X, Start.Y, Current.X, Current.Y, width, height))
+        {
+            var bounds = cell.Bounds.Intersect(new RectInt(0, 0, width, height));
+            for (int y = bounds.Top; y < bounds.Bottom; y++)
+                mask.AsSpan(y * width + bounds.Left, bounds.Width).Fill(255);
+        }
+        return mask;
     }
 
     public override void OnRenderOverlay(DrawingContext dc, CanvasTransform t)
@@ -161,16 +167,19 @@ public sealed class RectangleSelectTool : SelectionToolBase
             return;
         }
 
-        var bounds = SnappedBounds;
-        if (bounds.IsEmpty) return;
-        var topLeft = t.DocToView(bounds.Left, bounds.Top);
-        var bottomRight = t.DocToView(bounds.Right, bounds.Bottom);
-        var rect = new Rect(topLeft, bottomRight);
         var fill = new SolidColorBrush(Color.FromArgb(58, 255, 35, 45));
         var border = new Pen(new SolidColorBrush(Color.FromArgb(245, 255, 55, 65)), 2);
         fill.Freeze();
         border.Freeze();
-        dc.DrawRectangle(fill, border, rect);
+        var doc = Context.Workspace?.Document;
+        if (doc == null) return;
+        foreach (var cell in Context.SpriteGridLayout.CellsTouchedByDrag(
+                     Start.X, Start.Y, Current.X, Current.Y, doc.Width, doc.Height))
+        {
+            var topLeft = t.DocToView(cell.Bounds.Left, cell.Bounds.Top);
+            var bottomRight = t.DocToView(cell.Bounds.Right, cell.Bounds.Bottom);
+            dc.DrawRectangle(fill, border, new Rect(topLeft, bottomRight));
+        }
     }
 }
 

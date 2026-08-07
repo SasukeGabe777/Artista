@@ -33,6 +33,10 @@ public sealed class AppSettings
     public bool ShowSpriteGrid { get; set; }
     public int SpriteGridCellWidth { get; set; } = 32;
     public int SpriteGridCellHeight { get; set; } = 32;
+    public int SpriteGridOriginX { get; set; }
+    public int SpriteGridOriginY { get; set; }
+    public int SpriteGridSpacingX { get; set; }
+    public int SpriteGridSpacingY { get; set; }
     public bool ShowRulers { get; set; }
     public int JpegQuality { get; set; } = 92;
     public Dictionary<string, PanelState> Panels { get; set; } = new();

@@ -25,6 +25,15 @@ public sealed class CanvasView : FrameworkElement
     public bool ShowSpriteGrid { get; set; }
     public int SpriteGridCellWidth { get; set; } = 32;
     public int SpriteGridCellHeight { get; set; } = 32;
+    public int SpriteGridOriginX { get; set; }
+    public int SpriteGridOriginY { get; set; }
+    public int SpriteGridSpacingX { get; set; }
+    public int SpriteGridSpacingY { get; set; }
+
+    public SpriteGridLayout SpriteGridLayout => new(
+        SpriteGridCellWidth, SpriteGridCellHeight,
+        SpriteGridOriginX, SpriteGridOriginY,
+        SpriteGridSpacingX, SpriteGridSpacingY);
 
     private readonly DispatcherTimer _antsTimer;
     private double _antsOffset;
@@ -178,26 +187,41 @@ public sealed class CanvasView : FrameworkElement
 
     private void DrawSpriteGrid(DrawingContext dc, int docW, int docH)
     {
-        var layout = new SpriteGridLayout(SpriteGridCellWidth, SpriteGridCellHeight);
-        int columns = layout.Columns(docW), rows = layout.Rows(docH);
-        if (columns == 0 || rows == 0) return;
+        var layout = SpriteGridLayout;
+        var columns = layout.IntersectingColumnRange(docW);
+        var rows = layout.IntersectingRowRange(docH);
+        if (columns.Count == 0 || rows.Count == 0) return;
 
         var pen = new Pen(new SolidColorBrush(Color.FromArgb(225, 235, 45, 55)), 1.25);
         pen.Freeze();
         double left = OffsetX;
         double top = OffsetY;
-        double right = OffsetX + columns * SpriteGridCellWidth * Zoom;
-        double bottom = OffsetY + rows * SpriteGridCellHeight * Zoom;
+        double right = OffsetX + docW * Zoom;
+        double bottom = OffsetY + docH * Zoom;
 
         dc.PushClip(new RectangleGeometry(new Rect(OffsetX, OffsetY, docW * Zoom, docH * Zoom)));
-        for (int column = 0; column <= columns; column++)
+        var verticalLines = new HashSet<int>();
+        for (int column = columns.Min; column <= columns.Max; column++)
         {
-            double x = Math.Round(OffsetX + column * SpriteGridCellWidth * Zoom) + 0.5;
+            var cell = layout.CellBounds(column, rows.Min);
+            verticalLines.Add(cell.Left);
+            verticalLines.Add(cell.Right);
+        }
+        foreach (int documentX in verticalLines.Where(x => x >= 0 && x <= docW).OrderBy(x => x))
+        {
+            double x = Math.Round(OffsetX + documentX * Zoom) + 0.5;
             dc.DrawLine(pen, new Point(x, top), new Point(x, bottom));
         }
-        for (int row = 0; row <= rows; row++)
+        var horizontalLines = new HashSet<int>();
+        for (int row = rows.Min; row <= rows.Max; row++)
         {
-            double y = Math.Round(OffsetY + row * SpriteGridCellHeight * Zoom) + 0.5;
+            var cell = layout.CellBounds(columns.Min, row);
+            horizontalLines.Add(cell.Top);
+            horizontalLines.Add(cell.Bottom);
+        }
+        foreach (int documentY in horizontalLines.Where(y => y >= 0 && y <= docH).OrderBy(y => y))
+        {
+            double y = Math.Round(OffsetY + documentY * Zoom) + 0.5;
             dc.DrawLine(pen, new Point(left, y), new Point(right, y));
         }
         dc.Pop();

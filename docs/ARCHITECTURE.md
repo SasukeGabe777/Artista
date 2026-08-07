@@ -15,7 +15,8 @@ Artista.slnx
 │   ├── Layers/           Layer, BlendMode + compositing math
 │   ├── Documents/        Document (layers + selection + size), DocumentTransforms
 │   ├── Rendering/        Compositor (visible layers → composite, dirty-rect, preview substitution)
-│   ├── Selections/       Selection (byte coverage mask), SelectionRasterizer (AA scanline), FloodFill
+│   ├── Selections/       Selection/rasterizers plus reusable SpriteDetector, SpriteGridLayout,
+│   │                     and SpriteGridAnalyzer (assignment, alignment, origin fitting, inference)
 │   ├── History/          HistoryMemento hierarchy + HistoryStack (delta-based, memory-budgeted)
 │   ├── ColorEngine/      OkLab conversion, ColorMatcher (shared Remove Color engine)
 │   ├── Drawing/          StrokeBuffer (brush engine), ShapeRenderer, GradientRenderer, BucketFill
@@ -36,7 +37,7 @@ Artista.slnx
 │   ├── MainWindow*.cs    shell layout, commands/menus, self-test harness
 │   ├── ThemeManager.cs   palette swap + DWM dark title bars
 │   └── AppSettings.cs    JSON settings in %AppData%\Artista
-└── tests/Artista.Tests   xUnit suite over Artista.Core (82 tests)
+└── tests/Artista.Tests   xUnit suite over Artista.Core (95 tests)
 ```
 
 ## Key design points
@@ -46,6 +47,8 @@ Artista.slnx
 **Compositing** — `Compositor.Composite` walks visible layers per row (parallelized) with a fast path for Normal/opaque. It accepts a *substitute surface* for one layer id — this is how effect live previews and preview-based tools render without mutating the real layer.
 
 **History** — mementos store the *state to restore* and, when applied, return their inverse (Paint.NET's model). Pixel changes are stored as tight per-region deltas (`SurfaceRegionMemento`); structural changes capture layer-list/surface references (`DocumentStructureMemento` — which is why transforms must replace, never mutate, layer surfaces). `HistoryStack` trims oldest entries beyond a configurable byte budget.
+
+**Sprite analysis** — `SpriteDetector` finds eight-connected alpha regions across an inspection area expanded beyond the selection, then conservatively groups nearby satellite components before any grid is consulted. `SpriteGridAnalyzer` separately assigns detected sprites by actual pixel overlap, plans collision-checked integer translations, fits grid origins across all evidence, and infers repeating pitch/cell/spacing. The app previews these immutable plans before applying them; multi-sprite pixel normalization is committed as one `SurfaceRegionMemento`, while grid-only operations update persisted view configuration without touching artwork.
 
 **Strokes** — `StrokeBuffer` accumulates dab coverage with `max()` so overlapping dabs inside one stroke don't stack opacity; appliers blend from a stroke-start snapshot into the live surface, giving correct uniform-opacity strokes, live feedback, selection masking, and exactly one history delta per stroke.
 
